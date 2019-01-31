@@ -1,0 +1,62 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.1.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 2ca7dfe7efe151a50e80cc837357938c8deaff656107f895c893d060b572b48d
+
+name:           secure-gate
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/secure-gate#readme>
+homepage:       https://github.com/githubuser/secure-gate#readme
+bug-reports:    https://github.com/githubuser/secure-gate/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2019 Author name here
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/secure-gate
+
+library
+  exposed-modules:
+      Lib
+  other-modules:
+      Paths_secure_gate
+  hs-source-dirs:
+      src
+  build-depends:
+      base >=4.7 && <5
+  default-language: Haskell2010
+
+executable secure-gate-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_secure_gate
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , secure-gate
+  default-language: Haskell2010
+
+test-suite secure-gate-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_secure_gate
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , secure-gate
+  default-language: Haskell2010
