@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 878cf9dc62729b0efa109251ef2a43b6e77d36b825f4aafafc46b5a2024f8e95
+-- hash: 28b647d55106bd87f98e8b4e5c949124baff556c159eb58a58f0fcdd7c93a7be
 
 name:           secure-gate
 version:        0.1.0.0
@@ -28,6 +28,8 @@ source-repository head
 library
   exposed-modules:
       Circuit
+      Circuit.Gates
+      Circuit.Wire
       Lib
       Sender
   other-modules:
@@ -41,6 +43,7 @@ library
     , containers >=0.6
     , cryptonite >=0.25
     , mtl >=2.2
+    , vector >=0.12
   default-language: Haskell2010
 
 executable secure-gate-exe
@@ -58,6 +61,7 @@ executable secure-gate-exe
     , cryptonite >=0.25
     , mtl >=2.2
     , secure-gate
+    , vector >=0.12
   default-language: Haskell2010
 
 test-suite secure-gate-test
@@ -76,4 +80,5 @@ test-suite secure-gate-test
     , cryptonite >=0.25
     , mtl >=2.2
     , secure-gate
+    , vector >=0.12
   default-language: Haskell2010

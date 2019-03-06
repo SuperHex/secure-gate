@@ -26,6 +26,7 @@ dependencies:
 - bytestring >= 0.10
 - containers >= 0.6
 - mtl >= 2.2
+- vector >= 0.12
 
 library:
   source-dirs: src
