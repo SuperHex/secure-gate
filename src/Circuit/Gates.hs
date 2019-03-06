@@ -16,14 +16,22 @@ fullAdder a b c = do
   out      <- mkGate OR c0 c1
   return (s1, out)
 
-adder :: [Int] -> [Int] -> Int -> Builder [Int]
-adder []       []       _     = return []
-adder []       (_ : _)  _     = error "input wire lists' length differ!"
-adder (_ : _ ) []       _     = error "input wire lists' length differ!"
-adder (x : xs) (y : ys) carry = do
+adderN :: [Int] -> [Int] -> Int -> Builder [Int]
+adderN []       []       _     = return []
+adderN (x : xs) (y : ys) carry = do
   (s0, c0) <- fullAdder x y carry
-  out      <- adder xs ys c0
+  out      <- adderN xs ys c0
   return (s0 : out)
+
+adder :: [Int] -> [Int] -> Builder [Int]
+adder [] [] = return []
+adder x y | length x /= length y = error "input wire lists' length differ!"
+adder (x : xs) (y : ys) = do
+  (s, c) <- halfAdder x y
+  sums   <- adderN xs ys c
+  return (s : sums)
+
+(<+>) = adder
 
 halfSubtractor :: Int -> Int -> Builder (Int, Int)
 halfSubtractor x y = do
@@ -39,11 +47,19 @@ fullSubtractor x y bin = do
   bout       <- mkGate OR b b'
   return (diff, bout)
 
-subtractor :: [Int] -> [Int] -> Int -> Builder [Int]
-subtractor []       []       _      = return []
-subtractor []       (_ : _)  _      = error "input wire lists' length differ!"
-subtractor (_ : _ ) []       _      = error "input wire lists' length differ!"
-subtractor (x : xs) (y : ys) borrow = do
+subtractorN :: [Int] -> [Int] -> Int -> Builder [Int]
+subtractorN []       []       _      = return []
+subtractorN (x : xs) (y : ys) borrow = do
   (diff, bout) <- fullSubtractor x y borrow
-  out          <- subtractor xs ys bout
+  out          <- subtractorN xs ys bout
   return (diff : out)
+
+subtractor :: [Int] -> [Int] -> Builder [Int]
+subtractor [] [] = return []
+subtractor x y | length x /= length y = error "input wire lists' length differ!"
+subtractor (x : xs) (y : ys) = do
+  (d, b) <- halfSubtractor x y
+  diffs  <- subtractorN xs ys b
+  return (d : diffs)
+
+(<->) = subtractor
