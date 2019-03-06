@@ -11,13 +11,14 @@ import           Control.Monad.Reader
 import           Crypto.Cipher.AES
 import           Crypto.Cipher.Types
 import           Crypto.Error
-import           Crypto.Random        (getRandomBytes)
+import           Crypto.Random               (getRandomBytes)
 import           Data.Binary
 import           Data.Bits
-import qualified Data.ByteString      as BS
+import qualified Data.ByteString             as BS
 import           Data.IORef
-import qualified Data.Map             as M
-import qualified Data.Sequence        as Seq
+import qualified Data.Map                    as M
+import qualified Data.Sequence               as Seq
+import qualified Data.Vector.Mutable as MV
 import           Data.Word
 
 type Key = BS.ByteString
@@ -104,7 +105,7 @@ data GateType = AND | XOR | OR | NAND
 data Context = Context
   { gateIdx :: IORef Int
   , wireIdx :: IORef Int
-  , wireMap  :: IORef (M.Map Int (Key, Key))
+  , wireMap  :: IORef (M.Map Int Wire)
   , circuit :: IORef Circuit
   }
 
@@ -114,8 +115,8 @@ type Builder a = ReaderT Context IO a
 initCircuit :: IO Context
 initCircuit =
   Context
-    <$> newIORef 1
-    <*> newIORef 1
+    <$> newIORef 0
+    <*> newIORef 0
     <*> newIORef M.empty
     <*> newIORef Seq.empty
 
@@ -125,6 +126,69 @@ getCircuit c = do
   flip runReaderT context $ c >> do
     circ <- asks circuit
     lift (readIORef circ)
+
+evalCircuit :: (FiniteBits b) => Circuit -> M.Map Int Wire -> b -> b -> b
+evalCircuit = undefined
+
+evalGate :: MV.IOVector Key -> Gate -> IO (MV.IOVector Key)
+evalGate state g = do
+  let (in0, in1)               = inputs g
+      out                      = outs g
+      (row0, row1, row2, row3) = table g
+  ki0 <- MV.unsafeRead state in0
+  ki1 <- MV.unsafeRead state in1
+  let row          = getRowFromKeys ki0 ki1
+      (aes0, aes1) = (initAES ki0, initAES ki1)
+      ko           = doubleDecrypt aes0 aes1 $ case row of
+        0 -> row0
+        1 -> row1
+        2 -> row2
+        3 -> row3
+        _ -> error "wrong color bits!"
+  MV.unsafeWrite state out ko
+  return state
+  where doubleDecrypt a b = ctrCombine a nullIV . ctrCombine b nullIV
+
+eval :: (FiniteBits b) => b -> b -> Builder [Int] -> IO b
+eval a b c = do
+  context    <- initCircuit
+  (out, ctx) <- flip runReaderT context $ c >>= \outs ->
+    (,) <$> pure outs <*> ask
+  circ  <- readIORef (circuit ctx)
+  wires <- readIORef (wireMap ctx)
+  let in0 = toBits a
+      in1 = toBits b
+  wireNum <- readIORef (wireIdx ctx)
+  state   <- MV.new wireNum
+  -- setup initial state of input wires
+  forM_ [0 .. length in0 - 1] $ \idx -> do
+    case M.lookup idx wires of
+      Nothing -> error "input length exceed circuit's input"
+      (Just (k0, k1)) ->
+        MV.unsafeWrite state idx (if in0 !! idx then k1 else k0)
+  forM_ [0 .. length in1 - 1] $ \idx -> do
+    let wireIndex = idx + length in0
+    case M.lookup wireIndex wires of
+      Nothing -> error "input length exceed circuit's input"
+      (Just (k0, k1)) ->
+        MV.unsafeWrite state wireIndex (if in1 !! idx then k1 else k0)
+  -- evaluate all gates
+  -- mapM_ (evalGate state) circ
+  foldM_ evalGate state circ
+  outBits <- forM out $ \i -> do
+    k <- MV.read state i
+    let (k0, _) = wires M.! i
+    return $ k /= k0
+  return (fromBits outBits)
+
+evalInt = eval @Int
+
+fromBits :: (FiniteBits b) => [Bool] -> b
+fromBits = foldr f zeroBits
+  where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
+
+toBits :: (FiniteBits b) => b -> [Bool]
+toBits b = fmap (testBit b) [0 .. finiteBitSize b - 1]
 
 mkWire :: Builder Int
 mkWire = do
@@ -182,7 +246,7 @@ mkGate t in0 in1 = do
   return out
  where
   doubleEnc :: (AES128, AES128) -> Key -> Key
-  doubleEnc (a, b) = ecbEncrypt a . ecbEncrypt b
+  doubleEnc (a, b) = ctrCombine a nullIV . ctrCombine b nullIV
 
 notGate :: Int -> Builder Int
 notGate x = mkGate NAND x x
