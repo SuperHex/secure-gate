@@ -27,6 +27,7 @@ dependencies:
 - containers >= 0.6
 - mtl >= 2.2
 - vector >= 0.12
+- ghc-prim >= 0.5.3
 
 library:
   source-dirs: src
