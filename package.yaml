@@ -28,6 +28,7 @@ dependencies:
 - mtl >= 2.2
 - vector >= 0.12
 - ghc-prim >= 0.5.3
+- zeromq4-haskell >= 0.8.0
 
 library:
   source-dirs: src

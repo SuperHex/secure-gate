@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+
 module Circuit.Wire where
 
 import Circuit (mkWire, Builder)
