@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 38fa86e36100061e183bd981d8aef2cce9e80c629224a46c897d2e531f5d1e9a
+-- hash: 9196bf746ad287ac69cdc7e441d76ef5eba492dbe53de6179347f0b2154deb84
 
 name:           secure-gate
 version:        0.1.0.0
@@ -46,7 +46,9 @@ library
     , containers >=0.6
     , cryptonite >=0.25
     , ghc-prim >=0.5.3
+    , hashtables >=1.2
     , mtl >=2.2
+    , split >=0.2
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
   default-language: Haskell2010
@@ -65,8 +67,10 @@ executable secure-gate-exe
     , containers >=0.6
     , cryptonite >=0.25
     , ghc-prim >=0.5.3
+    , hashtables >=1.2
     , mtl >=2.2
     , secure-gate
+    , split >=0.2
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
   default-language: Haskell2010
@@ -86,8 +90,10 @@ test-suite secure-gate-test
     , containers >=0.6
     , cryptonite >=0.25
     , ghc-prim >=0.5.3
+    , hashtables >=1.2
     , mtl >=2.2
     , secure-gate
+    , split >=0.2
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
   default-language: Haskell2010

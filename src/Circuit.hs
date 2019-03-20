@@ -4,6 +4,8 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Circuit where
 
@@ -16,11 +18,15 @@ import           Crypto.Random        (getRandomBytes)
 import           Data.Binary
 import           Data.Bits
 import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as LBS
 import           Data.IORef
+import           Data.List.Split      (chunksOf)
 import qualified Data.Map             as M
+import           Data.Maybe           (fromJust)
 import qualified Data.Sequence        as Seq
 import qualified Data.Vector.Mutable  as MV
 import           Data.Word
+import           GHC.Generics         (Generic)
 import           System.ZMQ4.Monadic
 
 type Key = BS.ByteString
@@ -95,7 +101,9 @@ data Gate = Gate
   , inputs :: (Int, Int)
   , outs  :: Int
   , table :: (Key, Key, Key, Key)
-  }
+  } deriving (Generic)
+
+instance Binary Gate
 
 instance Show Gate where
   show (Gate idx ipt out _) =
@@ -104,27 +112,37 @@ instance Show Gate where
 data GateType = AND | XOR | OR | NAND
   deriving Show
 
-data Context = Context
-  { gateIdx :: IORef Int
+data Context z =  Context
+  { isRemote :: Bool
+  , gateIdx :: IORef Int
   , wireIdx :: IORef Int
   , wireMap :: IORef (M.Map Int Wire)
   , circuit :: IORef Circuit
+  , zmqSocket :: Maybe ((Socket z Rep))
+  , localInput :: Key
   }
 
 type Circuit = Seq.Seq Gate
-type Builder a = forall z . ReaderT Context (ZMQ z) a
+type Builder a = forall z . ReaderT (Context z) (ZMQ z) a
 
-initCircuit :: IO Context
-initCircuit =
+initCircuit :: Key -> IO (Context z)
+initCircuit k =
   Context
-    <$> newIORef 0
+    <$> pure False
+    <*> newIORef 0
     <*> newIORef 0
     <*> newIORef M.empty
     <*> newIORef Seq.empty
+    <*> pure Nothing
+    <*> pure k
 
-getCircuit :: Builder a -> IO Circuit
-getCircuit c = runZMQ $ do
-  context <- liftIO initCircuit
+initCircuitRemote z k = do
+  ctx <- initCircuit k
+  return $ ctx { isRemote = True, zmqSocket = Just z }
+
+getCircuit :: Builder a -> Key -> IO Circuit
+getCircuit c k = runZMQ $ do
+  context <- liftIO $ initCircuit k
   flip runReaderT context $ c >> do
     circ <- asks circuit
     liftIO (readIORef circ)
@@ -151,15 +169,15 @@ evalGate state g = do
   return state
   where doubleDecrypt a b = ctrCombine a nullIV . ctrCombine b nullIV
 
-eval :: (FiniteBits b) => b -> b -> Builder [Int] -> IO b
+eval :: Key -> Key -> Builder [Int] -> IO Key
 eval a b c = runZMQ $ do
-  context    <- liftIO initCircuit
+  context    <- liftIO $ initCircuit b -- assume Bob is client
   (out, ctx) <- flip runReaderT context $ c >>= \outs ->
     (,) <$> pure outs <*> ask
   circ  <- liftIO $ readIORef (circuit ctx)
   wires <- liftIO $ readIORef (wireMap ctx)
-  let in0 = toBits a
-      in1 = toBits b
+  let in0 = toBits . BS.unpack $ a
+      in1 = toBits . BS.unpack $ b
   wireNum <- liftIO $ readIORef (wireIdx ctx)
   state   <- liftIO $ MV.new wireNum
   -- setup initial state of input wires
@@ -181,16 +199,21 @@ eval a b c = runZMQ $ do
     k <- liftIO $ MV.read state i
     let (k0, _) = wires M.! i
     return $ k /= k0
-  return (fromBits outBits)
+  return (BS.pack . fromBits $ outBits)
 
-evalInt = eval @Int
-
-fromBits :: (FiniteBits b) => [Bool] -> b
-fromBits = foldr f zeroBits
+fromBits :: [Bool] -> [Word8]
+fromBits = fmap (foldr f zeroBits) . chunksOf 8
   where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
 
-toBits :: (FiniteBits b) => b -> [Bool]
-toBits b = fmap (testBit b) [0 .. finiteBitSize b - 1]
+toBits :: [Word8] -> [Bool]
+toBits = concatMap (\word -> fmap (testBit word) [0 .. finiteBitSize word - 1])
+
+finiteToBits :: (FiniteBits b) => b -> [Bool]
+finiteToBits b = fmap (testBit b) [0 .. finiteBitSize b - 1]
+
+fromFiniteBits :: (FiniteBits b) => [Bool] -> b
+fromFiniteBits = foldr f zeroBits
+  where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
 
 mkWire :: Builder Int
 mkWire = do
@@ -245,6 +268,12 @@ mkGate t in0 in1 = do
           )
       gate = Gate idx (in0, in1) out (shuffle c0 c1 cipher)
   liftIO (modifyIORef' (circuit context) (Seq.|> gate))
+
+  remote <- asks isRemote
+  when remote $ do
+    sock <- fromJust <$> asks zmqSocket
+    void . lift $ receive sock  -- just ignore whatever client says
+    lift $ send sock [] (LBS.toStrict . encode $ gate) -- and send more gates!
   return out
  where
   doubleEnc :: (AES128, AES128) -> Key -> Key

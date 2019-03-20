@@ -17,7 +17,8 @@ negative :: Index -> Builder Index
 negative i = mkGate XOR i i
 
 constant :: Int -> Index -> Builder [Index]
-constant n i = mapM (\b -> if b then positive i else negative i) (toBits n)
+constant n i =
+  mapM (\b -> if b then positive i else negative i) (finiteToBits n)
 
 halfAdder :: Index -> Index -> Builder (Index, Index)
 halfAdder w0 w1 = do

@@ -1,26 +1,71 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Circuit.Wire where
 
-import Circuit (mkWire, Builder)
-import Control.Monad (replicateM)
+import           Circuit              (Builder, mkWire, Context(..), toBits)
+import           Control.Monad        (replicateM)
+import           Control.Monad.Reader
+import           Data.Binary          (decode)
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as LBS (fromStrict)
+import           Data.IORef
+import           Data.List.NonEmpty   (fromList)
+import qualified Data.Map             as M
+import           System.ZMQ4.Monadic
+
+data Party = Alice | Bob
 
 {-# INLINE in8 #-}
-in8 :: Builder [Int]
-in8 = replicateM 8 mkWire
+in8 :: Party -> Builder [Int]
+in8 = inN 8
 
 {-# INLINE in16 #-}
-in16 :: Builder [Int]
-in16 = replicateM 16 mkWire
+in16 :: Party -> Builder [Int]
+in16 = inN 16
 
 {-# INLINE in32 #-}
-in32 :: Builder [Int]
-in32 = replicateM 32 mkWire
+in32 :: Party -> Builder [Int]
+in32 = inN 32
 
 {-# INLINE in64 #-}
-in64 :: Builder [Int]
-in64 = replicateM 64 mkWire
+in64 :: Party -> Builder [Int]
+in64 = inN 64
 
 {-# INLINE inN #-}
-inN :: Int -> Builder [Int]
-inN n = replicateM n mkWire
+inN :: Int -> Party -> Builder [Int]
+inN n p = do
+  w <- replicateM n mkWire
+  case p of
+    Alice -> sendLocalInput w
+    Bob   -> replyOT w
+  return w
+
+sendLocalInput :: [Int] -> Builder ()
+sendLocalInput ws = do
+  zmq <- asks zmqSocket
+  case zmq of
+    Nothing     -> return ()
+    (Just sock) -> do
+      inpt    <- asks localInput
+      wireRef <- asks wireMap
+      wires   <- liftIO $ readIORef wireRef
+      let bin  = toBits . BS.unpack $ inpt
+          keys = flip fmap (zip ws bin) $ \(idx, bit) ->
+            let (hi, lo) = wires M.! idx in if bit then hi else lo
+      void . lift . receive $ sock
+      lift $ sendMulti sock (fromList keys)
+
+replyOT :: [Int] -> Builder ()
+replyOT ws = do
+  zmq <- asks zmqSocket
+  case zmq of
+    Nothing     -> return ()
+    (Just sock) -> do
+      query <- lift $ receiveMulti sock
+      ref   <- asks wireMap
+      wires <- liftIO $ readIORef ref
+      let bin  = fmap (decode @Bool . LBS.fromStrict) query
+          keys = flip fmap (zip ws bin) $ \(idx, bit) ->
+            let (hi, lo) = wires M.! idx in if bit then hi else lo
+      lift $ sendMulti sock (fromList keys)
