@@ -52,7 +52,7 @@ sendLocalInput ws = do
       wires   <- liftIO $ readIORef wireRef
       let bin  = toBits . BS.unpack $ inpt
           keys = flip fmap (zip ws bin) $ \(idx, bit) ->
-            let (hi, lo) = wires M.! idx in if bit then hi else lo
+            let (lo, hi) = wires M.! idx in if bit then hi else lo
       void . lift . receive $ sock
       lift $ sendMulti sock (fromList keys)
 
@@ -67,5 +67,5 @@ replyOT ws = do
       wires <- liftIO $ readIORef ref
       let bin  = fmap (decode @Bool . LBS.fromStrict) query
           keys = flip fmap (zip ws bin) $ \(idx, bit) ->
-            let (hi, lo) = wires M.! idx in if bit then hi else lo
+            let (lo, hi) = wires M.! idx in if bit then hi else lo
       lift $ sendMulti sock (fromList keys)

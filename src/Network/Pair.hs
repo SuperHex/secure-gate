@@ -101,7 +101,7 @@ runClient msg sock = do
   keys <- receiveMulti sock
   let ks = fmap (decode @(Key, Key) . LBS.fromStrict) keys
       result' =
-        fromFiniteBits @Int $ fmap (\(b, (hi, _)) -> b == hi) (zip outVal ks)
+        fromFiniteBits @Int $ fmap (\(b, (lo, _)) -> b /= lo) (zip outVal ks)
   liftIO $ print result'
  where
   whileM_ :: Monad m => m a -> (a -> Bool) -> (a -> m b) -> m ()
