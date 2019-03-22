@@ -2,62 +2,103 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ExistentialQuantification #-}
 
 module Language.Core
   ( Id (..)
   , Pretty (..)
   , Core (..)
-  , Fold (..)
   ) where
 
 import Data.Bits
 import Data.Kind (Type)
-import Prelude   hiding ((+), (-), (*), (<=))
+import Data.Word
+import qualified Data.Function as F
 
+newtype Id repr st a = Id { unId :: repr st a }
 
-newtype Id repr a = Id { unId :: repr a }
+newtype Pretty st a = P { unP :: Int -> String }
 
-newtype Pretty a = P { unP :: String }
-  deriving Show
+pretty = flip unP 0
 
-pretty = unP
+class Core (repr :: Type -> Type -> Type) where
+  int  :: Int -> repr st Int
+  bool :: Bool -> repr st Bool
+  (.+) :: (Num a) => repr st a -> repr st a -> repr st a
+  (.-) :: (Num a) => repr st a -> repr st a -> repr st a
+  (.*) :: (Num a) => repr st a -> repr st a -> repr st a
+  lam :: (repr st a -> repr st b) -> repr st (a -> b)
+  app :: repr st (a -> b) -> repr st a -> repr st b
+  fix :: (repr st a -> repr st a) -> repr st a
+  if_ :: repr st Bool -> repr st a -> repr st a -> repr st a
+  (.<=) :: (Ord b) => repr st b -> repr st b -> repr st Bool
 
-class Core (repr :: Type -> Type) where
-  lit :: Int -> repr Int
-  (+) :: repr a -> repr a -> repr a
-  (-) :: repr a -> repr a -> repr a
-  (*) :: repr a -> repr a -> repr a
-  lam :: (repr a -> repr b) -> repr (a -> b)
-  lam2 :: (repr a -> repr b -> repr c) -> repr (a -> b -> c)
-  app :: repr (a -> b) -> repr a -> repr b
-  if_ :: repr Bool -> repr a -> repr a -> repr a
-  (<=) :: repr b -> repr b -> repr Bool
+lam2
+  :: (Core repr)
+  => (repr st a -> repr st b -> repr st c)
+  -> repr st (a -> b -> c)
+lam2 f = lam (lam . f)
 
+app2 f a = app (app f a)
 
-class (Core repr) => Fold (repr :: Type -> Type) where
-  foldl :: repr (b -> a -> b) -> repr b -> [repr a] -> repr b
-  foldr :: repr (a -> b -> b) -> repr b -> [repr a] -> repr b
-  scanl :: repr (b -> a -> b) -> repr b -> [repr a] -> [repr b]
+-- class Hardware (repr :: Type -> Type) where
+--   high :: repr Bool
+--   low :: repr Bool
+--   (.&&.) :: repr [Bool] -> repr [Bool] -> repr [Bool]
+--   batch :: [repr Bool] -> repr [Bool]
 
+-- newtype H repr a = H { unH :: repr [Bool] }
+
+-- instance (Hardware repr) => Core (H repr) where
+--   int n = H $ batch (replicate 10 high)
+--   a .+ b = H $ unH a .&&. unH b
+
+-- instance Hardware Pretty where
+--   high = P $ \t -> "h" ++ show t
+--   low = P $ \t -> "l" ++ show t
+--   a .&&. b = P $ \t -> unP a t ++ " && " ++ unP b (t + 1)
+--   batch x = P $ \t -> "wire[" ++ show t ++ "-" ++ show (length x + t) ++ "]"
 
 instance Core repr => Core (Id repr) where
-  lit n = Id $ lit n
-  a + b = Id $ unId a + unId b
-  a - b = Id $ unId a - unId b
-  a * b = Id $ unId a * unId b
+  int n = Id $ int n
+  bool b = Id $ bool b
+  a .+ b = Id $ unId a .+ unId b
+  a .- b = Id $ unId a .- unId b
+  a .* b = Id $ unId a .* unId b
   lam f = Id $ lam (unId . f . Id)
-  lam2 f  = Id $ lam2 (\a b -> unId $ f (Id a) (Id b))
   app f a = Id $ app (unId f) (unId a)
+  fix f = Id $ fix (unId . f . Id)
   if_ p a b = Id $ if_ (unId p) (unId a) (unId b)
-  a <= b = Id $ unId a <= unId b
+  a .<= b = Id $ unId a .<= unId b
 
 instance Core Pretty where
-  lit n = P $ show n
-  a + b = P $ unP a ++ " + " ++ unP b
-  a - b = P $ unP a ++ " - " ++ unP b
-  a * b = P $ unP a ++ " * " ++ unP b
-  lam f = P $ "(\\x -> " ++ unP (f (P "x")) ++ ")"
-  lam2 f = P $ "(\\x y -> " ++ unP (f (P "x") (P "y")) ++ ")"
-  app f a = P $ "(" ++ unP f ++ " " ++ unP a ++ ")"
-  if_ p a b = P $ "if " ++ unP p ++ " then " ++ unP a ++ " else " ++ unP b
-  a <= b = P $ unP a ++ " <= "  ++ unP b
+  int n = P $ const (show n)
+  bool b = P $ const (show b)
+  a .+ b = P $ \c -> unP a c ++ " + " ++ unP b c
+  a .- b = P $ \c -> unP a c ++ " - " ++ unP b c
+  a .* b = P $ \c -> unP a c ++ " * " ++ unP b c
+  lam f = P $ \c -> "(\\x" ++ show c ++ " -> " ++ unP (f (P . const $ "x" ++ show c)) (c + 1) ++ ")"
+  app f a = P $ \c -> "(" ++ unP f c ++ " " ++ unP a c ++ ")"
+  fix f = P $ \c -> "fix " ++ unP (lam f) c
+  if_ p a b = P $ \c -> "if " ++ unP p c ++ " then " ++ unP a c ++ " else " ++ unP b c
+  a .<= b = P $ \c -> unP a c ++ " <= "  ++ unP b c
+
+newtype Eval st a = Eval { unEval :: a }
+
+instance Core Eval where
+  int = Eval
+  bool = Eval
+  a .+ b = Eval $ unEval a + unEval b
+  a .- b = Eval $ unEval a - unEval b
+  a .* b = Eval $ unEval a * unEval b
+  lam f = Eval $ unEval . f . Eval
+  app f a = Eval $ unEval f (unEval a)
+  fix f = Eval $ F.fix (unEval (lam f))
+  if_ p a b = Eval $ if unEval p then unEval a else unEval b
+  a .<= b = Eval $ unEval a <= unEval b
+
