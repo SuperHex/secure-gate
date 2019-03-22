@@ -11,6 +11,7 @@
 
 module Language.Core
   ( Id (..)
+  , Eval (..)
   , Pretty (..)
   , Core (..)
   ) where
@@ -22,28 +23,25 @@ import qualified Data.Function as F
 
 newtype Id repr st a = Id { unId :: repr st a }
 
-newtype Pretty st a = P { unP :: Int -> String }
+newtype Pretty st a = Pretty { unP :: Int -> String }
 
 pretty = flip unP 0
 
 class Core (repr :: Type -> Type -> Type) where
-  int  :: Int -> repr st Int
-  bool :: Bool -> repr st Bool
-  (.+) :: (Num a) => repr st a -> repr st a -> repr st a
-  (.-) :: (Num a) => repr st a -> repr st a -> repr st a
-  (.*) :: (Num a) => repr st a -> repr st a -> repr st a
-  lam :: (repr st a -> repr st b) -> repr st (a -> b)
-  app :: repr st (a -> b) -> repr st a -> repr st b
-  fix :: (repr st a -> repr st a) -> repr st a
-  if_ :: repr st Bool -> repr st a -> repr st a -> repr st a
-  (.<=) :: (Ord b) => repr st b -> repr st b -> repr st Bool
+  int  :: Int -> repr Int Int
+  bool :: Bool -> repr Bool Bool
+  (.+) :: (Num a, Num st, Eq st) => repr st a -> repr st a -> repr st a
+  (.-) :: (Num a, Num st, Eq st) => repr st a -> repr st a -> repr st a
+  (.*) :: (Num a, Num st, Eq st) => repr st a -> repr st a -> repr st a
+  lam :: (repr sta a -> repr stb b) -> repr (repr sta a -> repr stb b) (a -> b)
+  app :: repr (repr sta a -> repr stb b) (a -> b) -> repr sta a -> repr stb b
+  fix ::
+      (repr (repr sa a -> repr sb b) (a -> b) -> repr (repr sa a -> repr sb b) (a -> b))
+      -> repr (repr sa a -> repr sb b) (a -> b)
+  if_ :: repr Bool Bool -> repr st a -> repr st a -> repr st a
+  (.<=) :: (Ord b, Ord st) => repr st b -> repr st b -> repr Bool Bool
 
-lam2
-  :: (Core repr)
-  => (repr st a -> repr st b -> repr st c)
-  -> repr st (a -> b -> c)
 lam2 f = lam (lam . f)
-
 app2 f a = app (app f a)
 
 -- class Hardware (repr :: Type -> Type) where
@@ -64,31 +62,31 @@ app2 f a = app (app f a)
 --   a .&&. b = P $ \t -> unP a t ++ " && " ++ unP b (t + 1)
 --   batch x = P $ \t -> "wire[" ++ show t ++ "-" ++ show (length x + t) ++ "]"
 
-instance Core repr => Core (Id repr) where
-  int n = Id $ int n
-  bool b = Id $ bool b
-  a .+ b = Id $ unId a .+ unId b
-  a .- b = Id $ unId a .- unId b
-  a .* b = Id $ unId a .* unId b
-  lam f = Id $ lam (unId . f . Id)
-  app f a = Id $ app (unId f) (unId a)
-  fix f = Id $ fix (unId . f . Id)
-  if_ p a b = Id $ if_ (unId p) (unId a) (unId b)
-  a .<= b = Id $ unId a .<= unId b
+-- instance Core repr => Core (Id repr) where
+--   int n = Id $ int n
+--   bool b = Id $ bool b
+--   a .+ b = Id $ unId a .+ unId b
+--   a .- b = Id $ unId a .- unId b
+--   a .* b = Id $ unId a .* unId b
+--   lam f = Id $ lam (unId . f . Id)
+--   app f a = Id $ app (unId f) (unId a)
+--   fix f = Id $ fix (unId . f . Id)
+--   if_ p a b = Id $ if_ (unId p) (unId a) (unId b)
+--   a .<= b = Id $ unId a .<= unId b
 
 instance Core Pretty where
-  int n = P $ const (show n)
-  bool b = P $ const (show b)
-  a .+ b = P $ \c -> unP a c ++ " + " ++ unP b c
-  a .- b = P $ \c -> unP a c ++ " - " ++ unP b c
-  a .* b = P $ \c -> unP a c ++ " * " ++ unP b c
-  lam f = P $ \c -> "(\\x" ++ show c ++ " -> " ++ unP (f (P . const $ "x" ++ show c)) (c + 1) ++ ")"
-  app f a = P $ \c -> "(" ++ unP f c ++ " " ++ unP a c ++ ")"
-  fix f = P $ \c -> "fix " ++ unP (lam f) c
-  if_ p a b = P $ \c -> "if " ++ unP p c ++ " then " ++ unP a c ++ " else " ++ unP b c
-  a .<= b = P $ \c -> unP a c ++ " <= "  ++ unP b c
+  int n = Pretty $ const (show n)
+  bool b = Pretty $ const (show b)
+  a .+ b = Pretty $ \c -> unP a c ++ " + " ++ unP b c
+  a .- b = Pretty $ \c -> unP a c ++ " - " ++ unP b c
+  a .* b = Pretty $ \c -> unP a c ++ " * " ++ unP b c
+  lam f = Pretty $ \c -> "(\\x" ++ show c ++ " -> " ++ unP (f (Pretty . const $ "x" ++ show c)) (c + 1) ++ ")"
+  app f a = Pretty $ \c -> "(" ++ unP f c ++ " " ++ unP a c ++ ")"
+  fix f = Pretty $ \c -> "fix " ++ unP (lam f) c
+  if_ p a b = Pretty $ \c -> "if " ++ unP p c ++ " then " ++ unP a c ++ " else " ++ unP b c
+  a .<= b = Pretty $ \c -> unP a c ++ " <= "  ++ unP b c
 
-newtype Eval st a = Eval { unEval :: a }
+newtype Eval st a = Eval { unEval :: a } deriving Show
 
 instance Core Eval where
   int = Eval

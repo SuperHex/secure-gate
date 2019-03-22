@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RoleAnnotations #-}
 
 module Language.Compiler.Meta (T (..)) where
 
@@ -6,6 +7,7 @@ import Language.Haskell.TH
 import Language.Core
 import qualified Data.Function as F (fix)
 
+type role T phantom phantom
 newtype T st a = T { unT :: Q Exp }
 
 instance Core T where
