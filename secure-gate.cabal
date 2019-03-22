@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 9196bf746ad287ac69cdc7e441d76ef5eba492dbe53de6179347f0b2154deb84
+-- hash: 78735b5029a7de2c59fbdee16f744e1f68c335def677090f65d6cd4b989fda4c
 
 name:           secure-gate
 version:        0.1.0.0
@@ -31,6 +31,8 @@ library
       Circuit.Gates
       Circuit.Wire
       Language
+      Language.Compiler.Meta
+      Language.Compiler.Partial
       Language.Core
       Lib
       Network.Pair
@@ -49,6 +51,7 @@ library
     , hashtables >=1.2
     , mtl >=2.2
     , split >=0.2
+    , template-haskell >=2.14
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
   default-language: Haskell2010
@@ -71,6 +74,7 @@ executable secure-gate-exe
     , mtl >=2.2
     , secure-gate
     , split >=0.2
+    , template-haskell >=2.14
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
   default-language: Haskell2010
@@ -94,6 +98,7 @@ test-suite secure-gate-test
     , mtl >=2.2
     , secure-gate
     , split >=0.2
+    , template-haskell >=2.14
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
   default-language: Haskell2010
