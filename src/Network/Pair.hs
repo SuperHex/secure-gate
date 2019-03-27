@@ -26,16 +26,16 @@ type BasicHashMap k v = H.IOHashTable (Basic.HashTable) k v
 initServer :: Address -> forall z . ZMQ z (Socket z Rep)
 initServer addr = do
   sock <- socket Rep
-  liftIO . print $ "starting server at: " ++ addr
-  liftIO . print $ "waiting client ..."
+  liftIO . putStrLn $ "starting server at: " ++ addr
+  liftIO . putStrLn $ "waiting client ..."
   bind sock addr
   return sock
 
 initClient :: Address -> forall z . ZMQ z (Socket z Req)
 initClient addr = do
   sock <- socket Req
-  liftIO . print $ "connecting to: " ++ addr
-  liftIO . print $ "waiting server ..."
+  liftIO . putStrLn $ "connecting to: " ++ addr
+  liftIO . putStrLn $ "waiting server ..."
   connect sock addr
   return sock
 
@@ -58,6 +58,11 @@ runServer prog msg sock = do
   let out' = fmap (wires M.!) out
   void $ receive sock
   sendMulti sock (fromList $ fmap (LBS.toStrict . encode) out')
+  -- 6. receive result from client
+  result <- receive sock
+  send sock [] ""
+  liftIO . putStrLn $ "Receved result: " ++ show
+    (decode @Int (LBS.fromStrict result))
 
 
 runClient :: Key -> (forall z . Socket z Req -> ZMQ z ())
@@ -93,7 +98,6 @@ runClient msg sock = do
   send sock [] "out"
   out <- receiveMulti sock
   let outWires = fmap (decode @Int . LBS.fromStrict) out
-  liftIO $ print outWires
   outVal <- liftIO $ mapM (fmap fromJust . H.lookup hm) outWires
 
   -- 6. retrive real value
@@ -102,6 +106,10 @@ runClient msg sock = do
   let ks = fmap (decode @(Key, Key) . LBS.fromStrict) keys
       result' =
         fromFiniteBits @Int $ fmap (\(b, (lo, _)) -> b /= lo) (zip outVal ks)
+  -- 7. send back results
+  send sock [] (LBS.toStrict $ encode (result' :: Int))
+  void $ receive sock
+  -- print result
   liftIO $ print result'
  where
   whileM_ :: Monad m => m a -> (a -> Bool) -> (a -> m b) -> m ()
@@ -110,7 +118,8 @@ runClient msg sock = do
     when (test a) (act a >> whileM_ pred test act)
 
 evalGateR :: BasicHashMap Int Key -> Gate -> ZMQ z ()
-evalGateR hash g = do
+evalGateR hash (Const _ wire k) = liftIO $ H.insert hash wire k
+evalGateR hash g                = do
   let (in0, in1)               = inputs g
       out                      = outs g
       (row0, row1, row2, row3) = table g

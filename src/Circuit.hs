@@ -1,11 +1,11 @@
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Circuit where
 
@@ -25,16 +25,12 @@ import qualified Data.Map             as M
 import           Data.Maybe           (fromJust)
 import qualified Data.Sequence        as Seq
 import qualified Data.Vector.Mutable  as MV
-import           Data.Word
 import           GHC.Generics         (Generic)
 import           System.ZMQ4.Monadic
 
 type Key = BS.ByteString
 type Message = BS.ByteString
 type CipherText = BS.ByteString
-
-encrypt :: Key -> Message -> CipherText
-encrypt k m = undefined
 
 genAESKey
   :: Int     -- | key length (bytes)
@@ -56,7 +52,7 @@ genAESKeyPair size = do
           . BS.unpack
   return (setColor 0 k0, setColor 1 k1)
 
-
+genAESKeyPair128, genAESKeyPair256 :: IO (Key, Key)
 genAESKeyPair128 = genAESKeyPair 16 -- 128 `div` 8
 genAESKeyPair256 = genAESKeyPair 32 -- 256 `div` 8
 
@@ -96,18 +92,23 @@ initAES k = case cipherInit k of
 
 ------------------------------------
 
-data Gate = Gate
-  { index :: Int
-  , inputs :: (Int, Int)
-  , outs  :: Int
-  , table :: (Key, Key, Key, Key)
-  } deriving (Generic)
+data Gate
+  = Const Int Int Key -- Const (gate index) (output wire index) (value)
+  | Free
+  | Dup Int (Int, Int)
+  | Logic { index :: Int
+          , inputs :: (Int, Int)
+          , outs  :: Int
+          , table :: (Key, Key, Key, Key) }
+  deriving (Generic)
 
 instance Binary Gate
 
 instance Show Gate where
-  show (Gate idx ipt out _) =
+  show (Logic idx ipt out _) =
     "Gate " ++ show idx ++ ": " ++ show ipt ++ " -> " ++ show out
+  show (Const idx wire _) = "ConstBit " ++ show idx ++ ": wire[" ++ show wire ++ "]"
+  show (Dup i o) = "Dup " ++ show i ++ " -> " ++ show o
 
 data GateType = AND | XOR | OR | NAND
   deriving Show
@@ -118,7 +119,7 @@ data Context z =  Context
   , wireIdx :: IORef Int
   , wireMap :: IORef (M.Map Int Wire)
   , circuit :: IORef Circuit
-  , zmqSocket :: Maybe ((Socket z Rep))
+  , zmqSocket :: Maybe (Socket z Rep)
   , localInput :: Key
   }
 
@@ -136,13 +137,14 @@ initCircuit k =
     <*> pure Nothing
     <*> pure k
 
+initCircuitRemote :: Socket z Rep -> Key -> IO (Context z)
 initCircuitRemote z k = do
   ctx <- initCircuit k
   return $ ctx { isRemote = True, zmqSocket = Just z }
 
-getCircuit :: Builder a -> Key -> IO Circuit
-getCircuit c k = runZMQ $ do
-  context <- liftIO $ initCircuit k
+getCircuit :: Builder a -> IO Circuit
+getCircuit c = runZMQ $ do
+  context <- liftIO $ initCircuit ""
   flip runReaderT context $ c >> do
     circ <- asks circuit
     liftIO (readIORef circ)
@@ -151,6 +153,9 @@ evalCircuit :: (FiniteBits b) => Circuit -> M.Map Int Wire -> b -> b -> b
 evalCircuit = undefined
 
 evalGate :: MV.IOVector Key -> Gate -> IO (MV.IOVector Key)
+evalGate state (Const _ wire key) = do
+  MV.unsafeWrite state wire key
+  return state
 evalGate state g = do
   let (in0, in1)               = inputs g
       out                      = outs g
@@ -172,20 +177,18 @@ evalGate state g = do
 eval :: Key -> Key -> Builder [Int] -> IO Key
 eval a b c = runZMQ $ do
   context    <- liftIO $ initCircuit b -- assume Bob is client
-  (out, ctx) <- flip runReaderT context $ c >>= \outs ->
-    (,) <$> pure outs <*> ask
-  circ  <- liftIO $ readIORef (circuit ctx)
-  wires <- liftIO $ readIORef (wireMap ctx)
+  (out, ctx) <- flip runReaderT context $ c >>= \os -> (,) <$> pure os <*> ask
+  circ       <- liftIO $ readIORef (circuit ctx)
+  wires      <- liftIO $ readIORef (wireMap ctx)
   let in0 = toBits . BS.unpack $ a
       in1 = toBits . BS.unpack $ b
   wireNum <- liftIO $ readIORef (wireIdx ctx)
   state   <- liftIO $ MV.new wireNum
   -- setup initial state of input wires
-  forM_ [0 .. length in0 - 1] $ \idx -> do
-    case M.lookup idx wires of
-      Nothing -> error "input length exceed circuit's input"
-      (Just (k0, k1)) ->
-        liftIO $ MV.unsafeWrite state idx (if in0 !! idx then k1 else k0)
+  forM_ [0 .. length in0 - 1] $ \idx -> case M.lookup idx wires of
+    Nothing -> error "input length exceed circuit's input"
+    (Just (k0, k1)) ->
+      liftIO $ MV.unsafeWrite state idx (if in0 !! idx then k1 else k0)
   forM_ [0 .. length in1 - 1] $ \idx -> do
     let wireIndex = idx + length in0
     case M.lookup wireIndex wires of
@@ -202,11 +205,10 @@ eval a b c = runZMQ $ do
   return (BS.pack . fromBits $ outBits)
 
 fromBits :: [Bool] -> [Word8]
-fromBits = fmap (foldr f zeroBits) . chunksOf 8
-  where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
+fromBits = fmap fromFiniteBits . chunksOf 8
 
 toBits :: [Word8] -> [Bool]
-toBits = concatMap (\word -> fmap (testBit word) [0 .. finiteBitSize word - 1])
+toBits = concatMap finiteToBits
 
 finiteToBits :: (FiniteBits b) => b -> [Bool]
 finiteToBits b = fmap (testBit b) [0 .. finiteBitSize b - 1]
@@ -231,11 +233,11 @@ mkGate t in0 in1 = do
   -- add gate index by one
   idx     <- liftIO (readIORef (gateIdx context))
   liftIO (modifyIORef' (gateIdx context) (+ 1))
-  out <- mkWire
-  map <- liftIO (readIORef (wireMap context))
-  let w0@(ki00, ki01)              = map M.! in0
-      w1@(ki10, ki11)              = map M.! in1
-      (   ko0 , ko1 )              = map M.! out
+  out  <- mkWire
+  wmap <- liftIO (readIORef (wireMap context))
+  let w0@(ki00, ki01)              = wmap M.! in0
+      w1@(ki10, ki11)              = wmap M.! in1
+      (   ko0 , ko1 )              = wmap M.! out
       [aes00, aes01, aes10, aes11] = fmap initAES [ki00, ki01, ki10, ki11]
       (row0, row1, row2, row3) =
         ((aes00, aes10), (aes00, aes11), (aes01, aes10), (aes01, aes11))
@@ -266,18 +268,44 @@ mkGate t in0 in1 = do
           , doubleEnc row2 ko1
           , doubleEnc row3 ko0
           )
-      gate = Gate idx (in0, in1) out (shuffle c0 c1 cipher)
+      gate = Logic idx (in0, in1) out (shuffle c0 c1 cipher)
+  -- local evaluation
   liftIO (modifyIORef' (circuit context) (Seq.|> gate))
-
-  remote <- asks isRemote
-  when remote $ do
-    sock <- fromJust <$> asks zmqSocket
-    void . lift $ receive sock  -- just ignore whatever client says
-    lift $ send sock [] (LBS.toStrict . encode $ gate) -- and send more gates!
+  -- remote evaluation
+  sendGate gate
   return out
  where
   doubleEnc :: (AES128, AES128) -> Key -> Key
   doubleEnc (a, b) = ctrCombine a nullIV . ctrCombine b nullIV
 
+mkConstBit :: Bool -> Builder Int
+mkConstBit b = do
+  out     <- mkWire
+  context <- ask
+  wmap    <- liftIO (readIORef (wireMap context))
+  idx     <- liftIO (readIORef (gateIdx context))
+  liftIO $ modifyIORef (gateIdx context) (+ 1)
+  let (lo, hi) = wmap M.! out
+      key      = if b then hi else lo
+      gate     = Const idx out key
+  -- local evaluation
+  liftIO $ modifyIORef (circuit context) (Seq.|> gate)
+  -- remote evaluation
+  sendGate gate
+  return out
+
+sendGate :: Gate -> Builder ()
+sendGate gate = do
+  remote <- asks isRemote
+  when remote $ do
+    sock <- fromJust <$> asks zmqSocket
+    void . lift $ receive sock  -- just ignore whatever client says
+    lift $ send sock [] (LBS.toStrict . encode $ gate) -- and send more gates!
+
+mkConst :: BS.ByteString -> Builder [Int]
+mkConst s = traverse mkConstBit (toBits $ BS.unpack s)
+
 notGate :: Int -> Builder Int
-notGate x = mkGate NAND x x
+notGate x = do
+  k <- mkConstBit True
+  mkGate XOR k x
