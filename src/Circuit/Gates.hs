@@ -88,11 +88,45 @@ mux s a b = do
   f <- mkGate AND n b
   mkGate OR t f
 
-ifThenElse :: [Index] -> [Index] -> [Index] -> Builder [Index]
-ifThenElse s a b = sequenceA (zipWith3 mux s a b)
+ifThenElse :: Index -> [Index] -> [Index] -> Builder [Index]
+ifThenElse s a b = sequenceA (zipWith (mux s) a b)
 
+-- length (Builder [Index]) := 3
+compareBit :: Index -> Index -> Builder (Index, Index, Index)
+compareBit a b = do
+  na  <- notGate a
+  nb  <- notGate b
+  l   <- mkGate AND na b
+  g   <- mkGate AND nb a
+  neq <- mkGate OR l g
+  e   <- notGate neq
+  return (l, e, g)
 
-foo a b = do
-  q <- a <-> b
-  f <- foo q b
-  ifThenElse q a f
+comparator :: [Index] -> [Index] -> Builder [Index]
+comparator []       []       = return []
+comparator (x : xs) (y : ys) = do
+  (l, e, g) <- compareBit x y
+  res       <- comparator xs ys
+  gt        <- case res of
+    [] -> ifThenElse g [l, e, g] [l, e, g]
+    r  -> ifThenElse g [l, e, g] r
+  ifThenElse l [l, e, g] gt
+
+lt :: [Index] -> [Index] -> Builder Index
+lt a b = fmap head (comparator a b)
+
+le :: [Index] -> [Index] -> Builder Index
+le a b = do
+  c <- comparator a b
+  mkGate OR (head c) (c !! 1)
+
+gt :: [Index] -> [Index] -> Builder Index
+gt a b = fmap (!! 2) (comparator a b)
+
+ge :: [Index] -> [Index] -> Builder Index
+ge a b = do
+  c <- comparator a b
+  mkGate OR (c !! 1) (c !! 2)
+
+eq :: [Index] -> [Index] -> Builder Index
+eq a b = fmap (!! 1) (comparator a b)
