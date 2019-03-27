@@ -5,11 +5,13 @@ module Main where
 import           Circuit
 import           Circuit.Gates
 import           Circuit.Wire
-import           Control.Monad.Trans   (liftIO)
-import qualified Data.ByteString as BS
-import           Data.Word             (Word8)
+import           Control.Monad.Trans       (liftIO)
+import qualified Data.ByteString           as BS
+import           Data.Word                 (Word8)
+import           Language.Compiler.Circuit
+import           Language.Core
 import           Network.Pair
-import           System.Environment    (getArgs)
+import           System.Environment        (getArgs)
 import           System.ZMQ4.Monadic
 
 main :: IO ()
@@ -32,6 +34,9 @@ main = do
     _ -> print "Please give two numbers"
  where
   prog = do
-    a <- in8 Alice
-    b <- in8 Bob
-    a <-> b
+    a <- in64 Alice
+    b <- in64 Bob
+    runWith b a $ lam2 $ \x y ->
+      let func = lam2 (.+) in if_ (x .<= y) x (app2 func x y)
+
+

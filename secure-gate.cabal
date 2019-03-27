@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 78735b5029a7de2c59fbdee16f744e1f68c335def677090f65d6cd4b989fda4c
+-- hash: 4b68dd2ba4164665f28073701777be4c2fd7ac2ac2a343b42ab90c9f6e40461b
 
 name:           secure-gate
 version:        0.1.0.0
@@ -31,11 +31,13 @@ library
       Circuit.Gates
       Circuit.Wire
       Language
+      Language.Compiler.Circuit
       Language.Compiler.Meta
       Language.Compiler.Partial
       Language.Core
       Lib
       Network.Pair
+      Parser
       Sender
   other-modules:
       Paths_secure_gate
@@ -47,6 +49,7 @@ library
     , bytestring >=0.10
     , containers >=0.6
     , cryptonite >=0.25
+    , data-fix ==0.2.0
     , ghc-prim >=0.5.3
     , hashtables >=1.2
     , mtl >=2.2
@@ -69,6 +72,7 @@ executable secure-gate-exe
     , bytestring >=0.10
     , containers >=0.6
     , cryptonite >=0.25
+    , data-fix ==0.2.0
     , ghc-prim >=0.5.3
     , hashtables >=1.2
     , mtl >=2.2
@@ -93,6 +97,7 @@ test-suite secure-gate-test
     , bytestring >=0.10
     , containers >=0.6
     , cryptonite >=0.25
+    , data-fix ==0.2.0
     , ghc-prim >=0.5.3
     , hashtables >=1.2
     , mtl >=2.2
