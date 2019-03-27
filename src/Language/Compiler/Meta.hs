@@ -16,7 +16,9 @@ instance Core T where
   a .+ b = T [| $(unT a) + $(unT b) |]
   a .- b = T [| $(unT a) - $(unT b) |]
   a .* b = T [| $(unT a) * $(unT b) |]
-  lam f  = T $ lamE [varP (mkName "x")] (unT $ f (T $ varE (mkName "x")))
+  lam f  = T $ do
+    name <- newName "x"
+    lamE [varP name] (unT $ f (T $ varE name))
   app f a = T $ appE (unT f) (unT a)
   fix f = T [| F.fix $(unT (lam f)) |]
   if_ p a b = T [| if $(unT p) then $(unT a) else $(unT b) |]

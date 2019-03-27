@@ -14,6 +14,7 @@ module Language.Core
   , Eval (..)
   , Pretty (..)
   , Core (..)
+  , lam2, app2
   ) where
 
 import Data.Bits
