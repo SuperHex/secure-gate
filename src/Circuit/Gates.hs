@@ -130,3 +130,18 @@ ge a b = do
 
 eq :: [Index] -> [Index] -> Builder Index
 eq a b = fmap (!! 1) (comparator a b)
+
+basicMul :: [Index] -> [Index] -> Builder [Index]
+basicMul a b = do
+  let partial y x = mapM (mkGate AND x) y
+      ps =
+        if length a < length b then mapM (partial b) a else mapM (partial a) b
+  interm <- ps
+  go interm
+ where
+  go []            = return []
+  go (x      : []) = return x
+  go (x : xs : ys) = do
+    ad  <- adder (tail x) (init xs)
+    res <- go $ (ad ++ [last xs]) : ys
+    return (head x : res)
