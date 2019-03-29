@@ -118,8 +118,12 @@ runClient msg sock = do
     when (test a) (act a >> whileM_ pred test act)
 
 evalGateR :: BasicHashMap Int Key -> Gate -> ZMQ z ()
-evalGateR hash (Const _ wire k) = liftIO $ H.insert hash wire k
-evalGateR hash g                = do
+evalGateR hash (Const _ wire k ) = liftIO $ H.insert hash wire k
+evalGateR hash (Free (i0, i1) o) = do
+  ki0 <- liftIO $ fromJust <$> H.lookup hash i0
+  ki1 <- liftIO $ fromJust <$> H.lookup hash i1
+  liftIO $ H.insert hash o (ki0 `xorKey` ki1)
+evalGateR hash g = do
   let (in0, in1)               = inputs g
       out                      = outs g
       (row0, row1, row2, row3) = table g

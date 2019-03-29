@@ -32,29 +32,50 @@ type Key = BS.ByteString
 type Message = BS.ByteString
 type CipherText = BS.ByteString
 
-genAESKey
-  :: Int     -- | key length (bytes)
-  -> IO Key
+genAESKey :: Int -> IO Key
 genAESKey = getRandomBytes
 
-genAESKeyPair
-  :: Int           -- | key length (bytes)
-  -> IO (Key, Key)
+setColor :: Word8 -> Word8 -> Key -> Key
+setColor color pos =
+  BS.pack
+    . (\x -> init x ++ [clearBit (last x) 0 `xor` color `xor` pos])
+    . BS.unpack
+
+genColor :: IO Word8
+genColor = (.&. 0x01) . BS.last <$> genAESKey 16
+
+genAESKeyPair :: Int -> IO (Key, Key)
 genAESKeyPair size = do
-  k0 <- genAESKey size
-  k1 <- genAESKey size
-  c  <- genAESKey 16
-  -- sample only the last bit
-  let color = (.&. 0x01) . BS.last $ c
-      setColor pos =
-        BS.pack
-          . (\x -> init x ++ [clearBit (last x) 0 `xor` color `xor` pos])
-          . BS.unpack
-  return (setColor 0 k0, setColor 1 k1)
+  k0    <- genAESKey size
+  k1    <- genAESKey size
+  color <- genColor
+  return (setColor color 0 k0, setColor color 1 k1)
+
+genOffset :: Int -> IO Key
+genOffset size = do
+  r <- genAESKey size
+  return $ setColor 1 0 r
+
+xorKey :: BS.ByteString -> BS.ByteString -> BS.ByteString
+xorKey a = BS.pack . BS.zipWith xor a
+
+genAESKeyPairWith :: Int -> Key -> IO (Key, Key)
+genAESKeyPairWith size offset = do
+  k0    <- genAESKey size
+  color <- genColor
+  let k0' = setColor color 0 k0
+      -- we assume LSB(offset) == 1
+      -- in order to generate different label
+      -- k1 := k0 ⊕ offset
+      k1  = k0' `xorKey` offset
+  return (k0', k1)
 
 genAESKeyPair128, genAESKeyPair256 :: IO (Key, Key)
 genAESKeyPair128 = genAESKeyPair 16 -- 128 `div` 8
 genAESKeyPair256 = genAESKeyPair 32 -- 256 `div` 8
+
+genAESKeyPair128With = genAESKeyPairWith 16
+genAESKeyPair256With = genAESKeyPairWith 32
 
 getColorBit :: Wire -> Word8
 getColorBit (k0, _) = (.&. 0x01) . BS.last $ k0
@@ -94,7 +115,7 @@ initAES k = case cipherInit k of
 
 data Gate
   = Const Int Int Key -- Const (gate index) (output wire index) (value)
-  | Free
+  | Free (Int, Int) Int
   | Dup Int (Int, Int)
   | Logic { index :: Int
           , inputs :: (Int, Int)
@@ -108,9 +129,10 @@ instance Show Gate where
   show (Logic idx ipt out _) =
     "Gate " ++ show idx ++ ": " ++ show ipt ++ " -> " ++ show out
   show (Const idx wire _) = "ConstBit " ++ show idx ++ ": wire[" ++ show wire ++ "]"
+  show (Free i o) = "Free " ++ show i ++ " -> " ++ show o
   show (Dup i o) = "Dup " ++ show i ++ " -> " ++ show o
 
-data GateType = AND | XOR | OR | NAND
+data GateType = AND | XOR
   deriving Show
 
 data Context z =  Context
@@ -121,6 +143,7 @@ data Context z =  Context
   , circuit :: IORef Circuit
   , zmqSocket :: Maybe (Socket z Rep)
   , localInput :: Key
+  , freeOffset :: Key
   }
 
 type Circuit = Seq.Seq Gate
@@ -136,6 +159,7 @@ initCircuit k =
     <*> newIORef Seq.empty
     <*> pure Nothing
     <*> pure k
+    <*> genOffset 16
 
 initCircuitRemote :: Socket z Rep -> Key -> IO (Context z)
 initCircuitRemote z k = do
@@ -155,6 +179,12 @@ evalCircuit = undefined
 evalGate :: MV.IOVector Key -> Gate -> IO (MV.IOVector Key)
 evalGate state (Const _ wire key) = do
   MV.unsafeWrite state wire key
+  return state
+evalGate state (Free (i0, i1) o) = do
+  ki0 <- MV.unsafeRead state i0
+  ki1 <- MV.unsafeRead state i1
+  let out = ki0 `xorKey` ki1
+  MV.unsafeWrite state o out
   return state
 evalGate state g = do
   let (in0, in1)               = inputs g
@@ -222,13 +252,15 @@ mkWire = do
   ref <- asks wireIdx
   idx <- liftIO (readIORef ref)
   liftIO (modifyIORef' ref (+ 1))
-  keys   <- liftIO genAESKeyPair128
+  offset <- asks freeOffset
+  keys   <- liftIO $ genAESKeyPair128With offset
+  -- keys   <- liftIO $ genAESKeyPair128
   mapRef <- asks wireMap
   liftIO $ modifyIORef mapRef (M.insert idx keys)
   return idx
 
 mkGate :: GateType -> Int -> Int -> Builder Int
-mkGate t in0 in1 = do
+mkGate AND in0 in1 = do
   context <- ask
   -- add gate index by one
   idx     <- liftIO (readIORef (gateIdx context))
@@ -241,33 +273,14 @@ mkGate t in0 in1 = do
       [aes00, aes01, aes10, aes11] = fmap initAES [ki00, ki01, ki10, ki11]
       (row0, row1, row2, row3) =
         ((aes00, aes10), (aes00, aes11), (aes01, aes10), (aes01, aes11))
-      c0     = getColorBit w0
-      c1     = getColorBit w1
-      cipher = case t of
-        AND ->
-          ( doubleEnc row0 ko0
-          , doubleEnc row1 ko0
-          , doubleEnc row2 ko0
-          , doubleEnc row3 ko1
-          )
-        OR ->
-          ( doubleEnc row0 ko0
-          , doubleEnc row1 ko1
-          , doubleEnc row2 ko1
-          , doubleEnc row3 ko1
-          )
-        XOR ->
-          ( doubleEnc row0 ko0
-          , doubleEnc row1 ko1
-          , doubleEnc row2 ko1
-          , doubleEnc row3 ko0
-          )
-        NAND ->
-          ( doubleEnc row0 ko1
-          , doubleEnc row1 ko1
-          , doubleEnc row2 ko1
-          , doubleEnc row3 ko0
-          )
+      c0 = getColorBit w0
+      c1 = getColorBit w1
+      cipher =
+        ( doubleEnc row0 ko0
+        , doubleEnc row1 ko0
+        , doubleEnc row2 ko0
+        , doubleEnc row3 ko1
+        )
       gate = Logic idx (in0, in1) out (shuffle c0 c1 cipher)
   -- local evaluation
   liftIO (modifyIORef' (circuit context) (Seq.|> gate))
@@ -277,6 +290,26 @@ mkGate t in0 in1 = do
  where
   doubleEnc :: (AES128, AES128) -> Key -> Key
   doubleEnc (a, b) = ctrCombine a nullIV . ctrCombine b nullIV
+
+freeXOR :: Int -> Int -> Builder Int
+freeXOR in0 in1 = do
+  context <- ask
+  _       <- liftIO $ readIORef (gateIdx context)
+  liftIO $ modifyIORef (gateIdx context) (+ 1)
+  -- generate output wire C_0 = A⊕B, C_1 = A⊕B⊕R
+  --   where A, B := False, R := offset
+  wire <- liftIO $ readIORef (wireIdx context)
+  liftIO $ modifyIORef (wireIdx context) (+ 1)
+  maskMap <- liftIO $ readIORef (wireMap context)
+  let (a0, _)   = maskMap M.! in0
+      (b0, _)   = maskMap M.! in1
+      offset    = freeOffset context
+      c@(c0, _) = (a0 `xorKey` b0, c0 `xorKey` offset)
+      gate      = Free (in0, in1) wire
+  liftIO $ modifyIORef (wireMap context) (M.insert wire c)
+  liftIO $ modifyIORef (circuit context) (Seq.|> gate)
+  sendGate gate
+  return wire
 
 mkConstBit :: Bool -> Builder Int
 mkConstBit b = do
@@ -302,10 +335,4 @@ sendGate gate = do
     void . lift $ receive sock  -- just ignore whatever client says
     lift $ send sock [] (LBS.toStrict . encode $ gate) -- and send more gates!
 
-mkConst :: BS.ByteString -> Builder [Int]
-mkConst s = traverse mkConstBit (toBits $ BS.unpack s)
 
-notGate :: Int -> Builder Int
-notGate x = do
-  k <- mkConstBit True
-  mkGate XOR k x

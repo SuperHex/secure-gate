@@ -2,27 +2,30 @@
 
 module Circuit.Gates where
 
-import Circuit
-import Circuit.Wire
-import Control.Monad
+import           Circuit
+import           Circuit.Wire
+import qualified Data.ByteString as BS
+import Control.Monad.Reader
 
 type Index = Int
 
-positive :: Index -> Builder Index
-positive i = do
-  n <- notGate i
-  mkGate OR i n
+mkConst :: BS.ByteString -> Builder [Int]
+mkConst s = traverse mkConstBit (toBits $ BS.unpack s)
 
-negative :: Index -> Builder Index
-negative i = mkGate XOR i i
+notGate :: Int -> Builder Int
+notGate x = do
+  k <- mkConstBit True
+  freeXOR k x
 
-constant :: Int -> Index -> Builder [Index]
-constant n i =
-  mapM (\b -> if b then positive i else negative i) (finiteToBits n)
+orGate :: Int -> Int -> Builder Int
+orGate a b = do
+  x  <- freeXOR a b
+  an <- mkGate AND a b
+  freeXOR x an
 
 halfAdder :: Index -> Index -> Builder (Index, Index)
 halfAdder w0 w1 = do
-  o0 <- mkGate XOR w0 w1
+  o0 <- freeXOR w0 w1
   o1 <- mkGate AND w0 w1
   return (o0, o1)
 
@@ -30,29 +33,34 @@ fullAdder :: Index -> Index -> Index -> Builder (Index, Index)
 fullAdder a b c = do
   (s0, c0) <- halfAdder a b
   (s1, c1) <- halfAdder s0 c
-  out      <- mkGate OR c0 c1
+  out      <- orGate c0 c1
   return (s1, out)
 
-adderN :: [Index] -> [Index] -> Index -> Builder [Index]
-adderN []       []       _     = return []
+adderN :: [Index] -> [Index] -> Index -> Builder ([Index], Index)
+adderN []       []       c     = return ([], c)
 adderN (x : xs) (y : ys) carry = do
-  (s0, c0) <- fullAdder x y carry
-  out      <- adderN xs ys c0
-  return (s0 : out)
+  (s0 , c0) <- fullAdder x y carry
+  (out, c ) <- adderN xs ys c0
+  return (s0 : out, c)
 
 adder :: [Index] -> [Index] -> Builder [Index]
 adder [] [] = return []
 adder x y | length x /= length y = error "input wire lists' length differ!"
 adder (x : xs) (y : ys) = do
-  (s, c) <- halfAdder x y
-  sums   <- adderN xs ys c
+  (s   , c) <- halfAdder x y
+  (sums, _) <- adderN xs ys c
   return (s : sums)
+
+adderC (x : xs) (y : ys) = do
+  (s , c ) <- halfAdder x y
+  (s1, c1) <- adderN xs ys c
+  return (s : s1, c1)
 
 (<+>) = adder
 
 halfSubtractor :: Index -> Index -> Builder (Index, Index)
 halfSubtractor x y = do
-  o0 <- mkGate XOR x y
+  o0 <- freeXOR x y
   o1 <- notGate x
   o2 <- mkGate AND y o1
   return (o0, o2)
@@ -61,7 +69,7 @@ fullSubtractor :: Index -> Index -> Index -> Builder (Index, Index)
 fullSubtractor x y bin = do
   (d   , b ) <- halfSubtractor x y
   (diff, b') <- halfSubtractor d bin
-  bout       <- mkGate OR b b'
+  bout       <- orGate b b'
   return (diff, bout)
 
 subtractorN :: [Index] -> [Index] -> Index -> Builder [Index]
@@ -86,7 +94,7 @@ mux s a b = do
   n <- notGate s
   t <- mkGate AND s a
   f <- mkGate AND n b
-  mkGate OR t f
+  orGate t f
 
 ifThenElse :: Index -> [Index] -> [Index] -> Builder [Index]
 ifThenElse s a b = sequenceA (zipWith (mux s) a b)
@@ -98,7 +106,7 @@ compareBit a b = do
   nb  <- notGate b
   l   <- mkGate AND na b
   g   <- mkGate AND nb a
-  neq <- mkGate OR l g
+  neq <- orGate l g
   e   <- notGate neq
   return (l, e, g)
 
@@ -118,7 +126,7 @@ lt a b = fmap head (comparator a b)
 le :: [Index] -> [Index] -> Builder Index
 le a b = do
   c <- comparator a b
-  mkGate OR (head c) (c !! 1)
+  orGate (head c) (c !! 1)
 
 gt :: [Index] -> [Index] -> Builder Index
 gt a b = fmap (!! 2) (comparator a b)
@@ -126,7 +134,7 @@ gt a b = fmap (!! 2) (comparator a b)
 ge :: [Index] -> [Index] -> Builder Index
 ge a b = do
   c <- comparator a b
-  mkGate OR (c !! 1) (c !! 2)
+  orGate (c !! 1) (c !! 2)
 
 eq :: [Index] -> [Index] -> Builder Index
 eq a b = fmap (!! 1) (comparator a b)
@@ -142,6 +150,16 @@ basicMul a b = do
   go []            = return []
   go (x      : []) = return x
   go (x : xs : ys) = do
-    ad  <- adder (tail x) (init xs)
-    res <- go $ (ad ++ [last xs]) : ys
+    (ad, c ) <- adderC (tail x) (init xs)
+    (s , c') <- halfAdder c (last xs)
+    res      <- goo ((ad ++ [s]) : ys) c'
     return (head x : res)
+   where
+    goo []            c     = return [c]
+    goo (x      : []) c     = return (x ++ [c])
+    goo (x : xs : ys) carry = do
+      (ad, c ) <- adderC (tail x) (init xs)
+      (s , c') <- fullAdder c (last xs) carry
+      res      <- goo ((ad ++ [s]) : ys) c'
+      return (head x : res)
+
