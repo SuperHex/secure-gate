@@ -7,6 +7,9 @@ import           Circuit.Wire
 import qualified Data.ByteString as BS
 import Control.Monad.Reader
 
+-- Note: All input bits are ordered as
+--         LSB ------> MSB
+
 type Index = Int
 
 mkConst :: BS.ByteString -> Builder [Int]
@@ -111,14 +114,16 @@ compareBit a b = do
   return (l, e, g)
 
 comparator :: [Index] -> [Index] -> Builder [Index]
-comparator []       []       = return []
-comparator (x : xs) (y : ys) = do
-  (l, e, g) <- compareBit x y
-  res       <- comparator xs ys
-  gt        <- case res of
-    [] -> ifThenElse g [l, e, g] [l, e, g]
-    r  -> ifThenElse g [l, e, g] r
-  ifThenElse l [l, e, g] gt
+comparator m n = go (reverse m) (reverse n)
+ where
+  go []       []       = return []
+  go (x : xs) (y : ys) = do
+    (l, e, g) <- compareBit x y
+    res       <- go xs ys
+    gt        <- case res of
+      [] -> pure [l, e, g]
+      r  -> ifThenElse g [l, e, g] r
+    ifThenElse l [l, e, g] gt
 
 lt :: [Index] -> [Index] -> Builder Index
 lt a b = fmap head (comparator a b)
