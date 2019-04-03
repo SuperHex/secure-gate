@@ -91,7 +91,7 @@ runClient msg sock = do
     case gate' of
       (Left  (_, _, e)) -> fail e
       (Right (_, _, g)) -> do
-        liftIO . putStrLn $ "Received " ++ show g
+        -- liftIO . putStrLn $ "Received " ++ show g
         evalGateR hm g
 
   -- 5. retrive output wires

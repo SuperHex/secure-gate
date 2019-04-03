@@ -11,21 +11,22 @@ module Circuit where
 
 import           Control.Monad
 import           Control.Monad.Reader
+import           Control.Monad.Trans.Memo.Map
 import           Crypto.Cipher.AES
 import           Crypto.Cipher.Types
 import           Crypto.Error
-import           Crypto.Random        (getRandomBytes)
+import           Crypto.Random                (getRandomBytes)
 import           Data.Binary
 import           Data.Bits
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Lazy         as LBS
 import           Data.IORef
-import           Data.List.Split      (chunksOf)
-import qualified Data.Map             as M
-import           Data.Maybe           (fromJust)
-import qualified Data.Sequence        as Seq
-import qualified Data.Vector.Mutable  as MV
-import           GHC.Generics         (Generic)
+import           Data.List.Split              (chunksOf)
+import qualified Data.Map                     as M
+import           Data.Maybe                   (fromJust)
+import qualified Data.Sequence                as Seq
+import qualified Data.Vector.Mutable          as MV
+import           GHC.Generics                 (Generic)
 import           System.ZMQ4.Monadic
 
 type Key = BS.ByteString
@@ -166,12 +167,13 @@ initCircuitRemote z k = do
   ctx <- initCircuit k
   return $ ctx { isRemote = True, zmqSocket = Just z }
 
-getCircuit :: Builder a -> IO Circuit
+getCircuit :: Builder a -> IO Int
 getCircuit c = runZMQ $ do
   context <- liftIO $ initCircuit ""
   flip runReaderT context $ c >> do
     circ <- asks circuit
-    liftIO (readIORef circ)
+    cir  <- liftIO (readIORef circ)
+    return $ Seq.length cir
 
 evalCircuit :: (FiniteBits b) => Circuit -> M.Map Int Wire -> b -> b -> b
 evalCircuit = undefined
@@ -283,7 +285,8 @@ mkGate AND in0 in1 = do
         )
       gate = Logic idx (in0, in1) out (shuffle c0 c1 cipher)
   -- local evaluation
-  liftIO (modifyIORef' (circuit context) (Seq.|> gate))
+  unless (isRemote context)
+    $ liftIO (modifyIORef' (circuit context) (Seq.|> gate))
   -- remote evaluation
   sendGate gate
   return out
@@ -307,7 +310,8 @@ freeXOR in0 in1 = do
       c@(c0, _) = (a0 `xorKey` b0, c0 `xorKey` offset)
       gate      = Free (in0, in1) wire
   liftIO $ modifyIORef (wireMap context) (M.insert wire c)
-  liftIO $ modifyIORef (circuit context) (Seq.|> gate)
+  unless (isRemote context) $ liftIO $ modifyIORef (circuit context)
+                                                   (Seq.|> gate)
   sendGate gate
   return wire
 
@@ -322,7 +326,8 @@ mkConstBit b = do
       key      = if b then hi else lo
       gate     = Const idx out key
   -- local evaluation
-  liftIO $ modifyIORef (circuit context) (Seq.|> gate)
+  unless (isRemote context) $ liftIO $ modifyIORef (circuit context)
+                                                   (Seq.|> gate)
   -- remote evaluation
   sendGate gate
   return out

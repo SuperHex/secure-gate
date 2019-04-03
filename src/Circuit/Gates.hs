@@ -4,8 +4,9 @@ module Circuit.Gates where
 
 import           Circuit
 import           Circuit.Wire
-import qualified Data.ByteString as BS
-import Control.Monad.Reader
+import           Control.Monad.Reader
+import qualified Data.ByteString      as BS
+import           Data.List.Split
 
 -- Note: All input bits are ordered as
 --         LSB ------> MSB
@@ -25,6 +26,12 @@ orGate a b = do
   x  <- freeXOR a b
   an <- mkGate AND a b
   freeXOR x an
+
+norGate :: Int -> Int -> Builder Int
+norGate a b = orGate a b >>= notGate
+
+nxorGate :: Int -> Int -> Builder Int
+nxorGate a b = freeXOR a b >>= notGate
 
 halfAdder :: Index -> Index -> Builder (Index, Index)
 halfAdder w0 w1 = do
@@ -125,24 +132,114 @@ comparator m n = go (reverse m) (reverse n)
       r  -> ifThenElse g [l, e, g] r
     ifThenElse l [l, e, g] gt
 
+cmp4 :: [Index] -> [Index] -> Builder (Index, Index, Index)
+cmp4 a b
+  | length a /= 4 || length b /= 4
+  = error "cmp4: input length not equal to 4"
+  | otherwise
+  = let (a3 : a2 : a1 : a0 : []) = a
+        (b3 : b2 : b1 : b0 : []) = b
+    in  do
+          nb3      <- notGate b3
+          nb2      <- notGate b2
+          nb1      <- notGate b1
+          nb0      <- notGate b0
+          s5       <- nxorGate a3 b3
+          s6       <- nxorGate a2 b2
+          s7       <- nxorGate a1 b1
+          s8       <- nxorGate a0 b0
+          s1       <- mkGate AND a3 nb3
+          s2_0     <- mkGate AND a2 nb2
+          s2       <- mkGate AND s2_0 s5
+          s3_0     <- mkGate AND a1 nb1
+          s3_1     <- mkGate AND s5 s6
+          s3       <- mkGate AND s3_0 s3_1
+          s4_0     <- mkGate AND a0 nb0
+          s4_1     <- mkGate AND s5 s6
+          s4_2     <- mkGate AND s4_0 s4_1
+          s4       <- mkGate AND s4_2 s7
+          -- output A > B
+          a_gt_b_0 <- orGate s1 s2
+          a_gt_b_1 <- orGate s3 s4
+          a_gt_b   <- orGate a_gt_b_0 a_gt_b_1
+          -- output A = B
+          a_eq_b_0 <- mkGate AND s5 s6
+          a_eq_b_1 <- mkGate AND s7 s8
+          a_eq_b   <- mkGate AND a_eq_b_0 a_eq_b_1
+          -- output A < B
+          a_lt_b   <- norGate a_gt_b a_eq_b
+          return (a_lt_b, a_eq_b, a_gt_b)
+
+cmp4MSB
+  :: [Index]
+  -> [Index]
+  -> (Index, Index, Index)
+  -> Builder (Index, Index, Index)
+cmp4MSB a b (lin, ein, gin) = do
+  (l, e, g) <- cmp4 a b
+  -- A < B
+  and1      <- mkGate AND l ein
+  altb      <- orGate and1 lin
+  -- A = B
+  aeqb      <- mkGate AND e ein
+  -- A > B
+  and2      <- mkGate AND g ein
+  agtb      <- orGate and2 gin
+  return (altb, aeqb, agtb)
+
+cmp4N :: [Index] -> [Index] -> Builder [Index]
+cmp4N a b =
+  let (x : a') = chunksOf 4 (reverse a)
+      (y : b') = chunksOf 4 (reverse b)
+  in  do
+        c         <- cmp4 x y
+        (l, e, g) <- foldM (\m f -> f m) c $ zipWith cmp4MSB a' b'
+        return [l, e, g]
+
+eq4 :: [Index] -> [Index] -> Builder Index
+eq4 a b
+  | length a /= 4 || length b /= 4
+  = error "eq4: input length not qeual to 4"
+  | otherwise
+  = let (a0 : a1 : a2 : a3 : []) = a
+        (b0 : b1 : b2 : b3 : []) = b
+    in  do
+          o0   <- nxorGate a0 b0
+          o1   <- nxorGate a1 b1
+          o2   <- nxorGate a2 b2
+          o3   <- nxorGate a3 b3
+          and0 <- mkGate AND o0 o1
+          and1 <- mkGate AND o2 o3
+          mkGate AND and0 and1
+
+eq4N :: [Index] -> [Index] -> Builder Index
+eq4N a b =
+  let a' = chunksOf 4 a
+      b' = chunksOf 4 b
+  in  do
+        r <- zipWithM eq4 a' b'
+        case r of
+          []       -> error "eq4N: empty input"
+          (x : xs) -> foldM (mkGate AND) x xs
+
 lt :: [Index] -> [Index] -> Builder Index
-lt a b = fmap head (comparator a b)
+lt a b = fmap head (cmp4N a b)
 
 le :: [Index] -> [Index] -> Builder Index
 le a b = do
-  c <- comparator a b
+  c <- cmp4N a b
   orGate (head c) (c !! 1)
 
 gt :: [Index] -> [Index] -> Builder Index
-gt a b = fmap (!! 2) (comparator a b)
+gt a b = fmap (!! 2) (cmp4N a b)
 
 ge :: [Index] -> [Index] -> Builder Index
 ge a b = do
-  c <- comparator a b
+  c <- cmp4N a b
   orGate (c !! 1) (c !! 2)
 
 eq :: [Index] -> [Index] -> Builder Index
-eq a b = fmap (!! 1) (comparator a b)
+eq = eq4N
 
 basicMul :: [Index] -> [Index] -> Builder [Index]
 basicMul a b = do

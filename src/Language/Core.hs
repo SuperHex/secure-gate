@@ -29,6 +29,7 @@ newtype Pretty st a = Pretty { unP :: Int -> String }
 pretty = flip unP 0
 
 class Core (repr :: Type -> Type -> Type) where
+  word8 :: Word8 -> repr Word8 Word8
   int  :: Int -> repr Int Int
   bool :: Bool -> repr Bool Bool
   (.+) :: (Num a, Num st, Eq st) => repr st a -> repr st a -> repr st a
@@ -41,6 +42,8 @@ class Core (repr :: Type -> Type -> Type) where
       -> repr (repr sa a -> repr sb b) (a -> b)
   if_ :: repr Bool Bool -> repr st a -> repr st a -> repr st a
   (.<=) :: (Ord b, Ord st) => repr st b -> repr st b -> repr Bool Bool
+  (.==) :: (Eq b, Eq st) => repr st b -> repr st b -> repr Bool Bool
+  (.!=) :: (Eq b, Eq st) => repr st b -> repr st b -> repr Bool Bool
 
 lam2 f = lam (lam . f)
 app2 f a = app (app f a)
@@ -76,6 +79,7 @@ app2 f a = app (app f a)
 --   a .<= b = Id $ unId a .<= unId b
 
 instance Core Pretty where
+  word8 n = Pretty $ const (show n)
   int n = Pretty $ const (show n)
   bool b = Pretty $ const (show b)
   a .+ b = Pretty $ \c -> unP a c ++ " + " ++ unP b c
@@ -86,10 +90,13 @@ instance Core Pretty where
   fix f = Pretty $ \c -> "fix " ++ unP (lam f) c
   if_ p a b = Pretty $ \c -> "if " ++ unP p c ++ " then " ++ unP a c ++ " else " ++ unP b c
   a .<= b = Pretty $ \c -> unP a c ++ " <= "  ++ unP b c
+  a .== b = Pretty $ \c -> unP a c ++ " == " ++ unP b c
+  a .!= b = Pretty $ \c -> unP a c ++ " /= " ++ unP b c
 
 newtype Eval st a = Eval { unEval :: a } deriving Show
 
 instance Core Eval where
+  word8 = Eval
   int = Eval
   bool = Eval
   a .+ b = Eval $ unEval a + unEval b
@@ -100,4 +107,5 @@ instance Core Eval where
   fix f = Eval $ F.fix (unEval (lam f))
   if_ p a b = Eval $ if unEval p then unEval a else unEval b
   a .<= b = Eval $ unEval a <= unEval b
-
+  a .== b = Eval $ unEval a == unEval b
+  a .!= b = Eval $ unEval a /= unEval b
