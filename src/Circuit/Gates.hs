@@ -24,7 +24,7 @@ notGate x = do
 orGate :: Int -> Int -> Builder Int
 orGate a b = do
   x  <- freeXOR a b
-  an <- mkGate AND a b
+  an <- halfAND a b
   freeXOR x an
 
 norGate :: Int -> Int -> Builder Int
@@ -36,7 +36,7 @@ nxorGate a b = freeXOR a b >>= notGate
 halfAdder :: Index -> Index -> Builder (Index, Index)
 halfAdder w0 w1 = do
   o0 <- freeXOR w0 w1
-  o1 <- mkGate AND w0 w1
+  o1 <- halfAND w0 w1
   return (o0, o1)
 
 fullAdder :: Index -> Index -> Index -> Builder (Index, Index)
@@ -72,7 +72,7 @@ halfSubtractor :: Index -> Index -> Builder (Index, Index)
 halfSubtractor x y = do
   o0 <- freeXOR x y
   o1 <- notGate x
-  o2 <- mkGate AND y o1
+  o2 <- halfAND y o1
   return (o0, o2)
 
 fullSubtractor :: Index -> Index -> Index -> Builder (Index, Index)
@@ -102,8 +102,8 @@ subtractor (x : xs) (y : ys) = do
 mux :: Index -> Index -> Index -> Builder Index
 mux s a b = do
   n <- notGate s
-  t <- mkGate AND s a
-  f <- mkGate AND n b
+  t <- halfAND s a
+  f <- halfAND n b
   orGate t f
 
 ifThenElse :: Index -> [Index] -> [Index] -> Builder [Index]
@@ -114,8 +114,8 @@ compareBit :: Index -> Index -> Builder (Index, Index, Index)
 compareBit a b = do
   na  <- notGate a
   nb  <- notGate b
-  l   <- mkGate AND na b
-  g   <- mkGate AND nb a
+  l   <- halfAND na b
+  g   <- halfAND nb a
   neq <- orGate l g
   e   <- notGate neq
   return (l, e, g)
@@ -148,24 +148,24 @@ cmp4 a b
           s6       <- nxorGate a2 b2
           s7       <- nxorGate a1 b1
           s8       <- nxorGate a0 b0
-          s1       <- mkGate AND a3 nb3
-          s2_0     <- mkGate AND a2 nb2
-          s2       <- mkGate AND s2_0 s5
-          s3_0     <- mkGate AND a1 nb1
-          s3_1     <- mkGate AND s5 s6
-          s3       <- mkGate AND s3_0 s3_1
-          s4_0     <- mkGate AND a0 nb0
-          s4_1     <- mkGate AND s5 s6
-          s4_2     <- mkGate AND s4_0 s4_1
-          s4       <- mkGate AND s4_2 s7
+          s1       <- halfAND a3 nb3
+          s2_0     <- halfAND a2 nb2
+          s2       <- halfAND s2_0 s5
+          s3_0     <- halfAND a1 nb1
+          s3_1     <- halfAND s5 s6
+          s3       <- halfAND s3_0 s3_1
+          s4_0     <- halfAND a0 nb0
+          s4_1     <- halfAND s5 s6
+          s4_2     <- halfAND s4_0 s4_1
+          s4       <- halfAND s4_2 s7
           -- output A > B
           a_gt_b_0 <- orGate s1 s2
           a_gt_b_1 <- orGate s3 s4
           a_gt_b   <- orGate a_gt_b_0 a_gt_b_1
           -- output A = B
-          a_eq_b_0 <- mkGate AND s5 s6
-          a_eq_b_1 <- mkGate AND s7 s8
-          a_eq_b   <- mkGate AND a_eq_b_0 a_eq_b_1
+          a_eq_b_0 <- halfAND s5 s6
+          a_eq_b_1 <- halfAND s7 s8
+          a_eq_b   <- halfAND a_eq_b_0 a_eq_b_1
           -- output A < B
           a_lt_b   <- norGate a_gt_b a_eq_b
           return (a_lt_b, a_eq_b, a_gt_b)
@@ -178,12 +178,12 @@ cmp4MSB
 cmp4MSB a b (lin, ein, gin) = do
   (l, e, g) <- cmp4 a b
   -- A < B
-  and1      <- mkGate AND l ein
+  and1      <- halfAND l ein
   altb      <- orGate and1 lin
   -- A = B
-  aeqb      <- mkGate AND e ein
+  aeqb      <- halfAND e ein
   -- A > B
-  and2      <- mkGate AND g ein
+  and2      <- halfAND g ein
   agtb      <- orGate and2 gin
   return (altb, aeqb, agtb)
 
@@ -208,9 +208,9 @@ eq4 a b
           o1   <- nxorGate a1 b1
           o2   <- nxorGate a2 b2
           o3   <- nxorGate a3 b3
-          and0 <- mkGate AND o0 o1
-          and1 <- mkGate AND o2 o3
-          mkGate AND and0 and1
+          and0 <- halfAND o0 o1
+          and1 <- halfAND o2 o3
+          halfAND and0 and1
 
 eq4N :: [Index] -> [Index] -> Builder Index
 eq4N a b =
@@ -220,7 +220,7 @@ eq4N a b =
         r <- zipWithM eq4 a' b'
         case r of
           []       -> error "eq4N: empty input"
-          (x : xs) -> foldM (mkGate AND) x xs
+          (x : xs) -> foldM (halfAND) x xs
 
 lt :: [Index] -> [Index] -> Builder Index
 lt a b = fmap head (cmp4N a b)
@@ -243,7 +243,7 @@ eq = eq4N
 
 basicMul :: [Index] -> [Index] -> Builder [Index]
 basicMul a b = do
-  let partial y x = mapM (mkGate AND x) y
+  let partial y x = mapM (halfAND x) y
       ps =
         if length a < length b then mapM (partial b) a else mapM (partial a) b
   interm <- ps

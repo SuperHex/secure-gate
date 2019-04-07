@@ -37,6 +37,7 @@ initClient addr = do
   liftIO . putStrLn $ "connecting to: " ++ addr
   liftIO . putStrLn $ "waiting server ..."
   connect sock addr
+  liftIO . putStrLn $ "connected. now running ..."
   return sock
 
 runServer :: Builder [Int] -> Key -> (forall z . Socket z Rep -> ZMQ z ())
@@ -123,6 +124,21 @@ evalGateR hash (Free (i0, i1) o) = do
   ki0 <- liftIO $ fromJust <$> H.lookup hash i0
   ki1 <- liftIO $ fromJust <$> H.lookup hash i1
   liftIO $ H.insert hash o (ki0 `xorKey` ki1)
+evalGateR hash (Half _ (i0, i1) o (k0, k1)) = do
+  ki0 <- liftIO $ fromJust <$> H.lookup hash i0
+  ki1 <- liftIO $ fromJust <$> H.lookup hash i1
+  -- get r⊕b/color bit from wire b
+  let colorA       = getColorBit ki0
+      rb           = getColorBit ki1
+      (aesa, aesb) = (initAES ki0, initAES ki1)
+      g            = case colorA of
+        0 -> ctrCombine aesa nullIV (BS.replicate 16 0)
+        1 -> ctrCombine aesa nullIV k0
+      e = case rb of
+        0 -> ctrCombine aesb nullIV (BS.replicate 16 0)
+        1 -> ctrCombine aesb nullIV k1 `xorKey` ki0
+      out = g `xorKey` e
+  liftIO $ H.insert hash o out
 evalGateR hash g = do
   let (in0, in1)               = inputs g
       out                      = outs g

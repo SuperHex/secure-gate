@@ -11,7 +11,6 @@ module Circuit where
 
 import           Control.Monad
 import           Control.Monad.Reader
-import           Control.Monad.Trans.Memo.Map
 import           Crypto.Cipher.AES
 import           Crypto.Cipher.Types
 import           Crypto.Error
@@ -78,12 +77,11 @@ genAESKeyPair256 = genAESKeyPair 32 -- 256 `div` 8
 genAESKeyPair128With = genAESKeyPairWith 16
 genAESKeyPair256With = genAESKeyPairWith 32
 
-getColorBit :: Wire -> Word8
-getColorBit (k0, _) = (.&. 0x01) . BS.last $ k0
+getColorBit :: Key -> Word8
+getColorBit = (.&. 0x01) . BS.last
 
 getRowFromKeys :: Key -> Key -> Word8
-getRowFromKeys k0 k1 =
-  (getColorBit (k0, undefined) `shiftL` 1) + getColorBit (k1, undefined)
+getRowFromKeys k0 k1 = (getColorBit k0 `shiftL` 1) + getColorBit k1
 
 shuffle :: Word8 -> Word8 -> Table -> Table
 shuffle c0 c1 t@(a, b, c, d) = case c0 of
@@ -117,7 +115,7 @@ initAES k = case cipherInit k of
 data Gate
   = Const Int Int Key -- Const (gate index) (output wire index) (value)
   | Free (Int, Int) Int
-  | Dup Int (Int, Int)
+  | Half Int (Int, Int) Int (Key, Key)
   | Logic { index :: Int
           , inputs :: (Int, Int)
           , outs  :: Int
@@ -131,10 +129,6 @@ instance Show Gate where
     "Gate " ++ show idx ++ ": " ++ show ipt ++ " -> " ++ show out
   show (Const idx wire _) = "ConstBit " ++ show idx ++ ": wire[" ++ show wire ++ "]"
   show (Free i o) = "Free " ++ show i ++ " -> " ++ show o
-  show (Dup i o) = "Dup " ++ show i ++ " -> " ++ show o
-
-data GateType = AND | XOR
-  deriving Show
 
 data Context z =  Context
   { isRemote :: Bool
@@ -186,6 +180,22 @@ evalGate state (Free (i0, i1) o) = do
   ki0 <- MV.unsafeRead state i0
   ki1 <- MV.unsafeRead state i1
   let out = ki0 `xorKey` ki1
+  MV.unsafeWrite state o out
+  return state
+evalGate state (Half _ (i0, i1) o (k0, k1)) = do
+  ki0 <- MV.unsafeRead state i0
+  ki1 <- MV.unsafeRead state i1
+  -- get r⊕b/color bit from wire b
+  let colorA       = getColorBit ki0
+      rb           = getColorBit ki1
+      (aesa, aesb) = (initAES ki0, initAES ki1)
+      g            = case colorA of
+        0 -> ctrCombine aesa nullIV (BS.replicate 16 0)
+        1 -> ctrCombine aesa nullIV k0
+      e = case rb of
+        0 -> ctrCombine aesb nullIV (BS.replicate 16 0)
+        1 -> ctrCombine aesb nullIV k1 `xorKey` ki0
+      out = g `xorKey` e
   MV.unsafeWrite state o out
   return state
 evalGate state g = do
@@ -261,38 +271,55 @@ mkWire = do
   liftIO $ modifyIORef mapRef (M.insert idx keys)
   return idx
 
-mkGate :: GateType -> Int -> Int -> Builder Int
-mkGate AND in0 in1 = do
+halfAND :: Int -> Int -> Builder Int
+halfAND a b = do
   context <- ask
-  -- add gate index by one
-  idx     <- liftIO (readIORef (gateIdx context))
-  liftIO (modifyIORef' (gateIdx context) (+ 1))
-  out  <- mkWire
-  wmap <- liftIO (readIORef (wireMap context))
-  let w0@(ki00, ki01)              = wmap M.! in0
-      w1@(ki10, ki11)              = wmap M.! in1
-      (   ko0 , ko1 )              = wmap M.! out
-      [aes00, aes01, aes10, aes11] = fmap initAES [ki00, ki01, ki10, ki11]
-      (row0, row1, row2, row3) =
-        ((aes00, aes10), (aes00, aes11), (aes01, aes10), (aes01, aes11))
-      c0 = getColorBit w0
-      c1 = getColorBit w1
-      cipher =
-        ( doubleEnc row0 ko0
-        , doubleEnc row1 ko0
-        , doubleEnc row2 ko0
-        , doubleEnc row3 ko1
-        )
-      gate = Logic idx (in0, in1) out (shuffle c0 c1 cipher)
-  -- local evaluation
-  unless (isRemote context)
-    $ liftIO (modifyIORef' (circuit context) (Seq.|> gate))
-  -- remote evaluation
+  idx     <- liftIO $ readIORef (gateIdx context)
+  liftIO $ modifyIORef (gateIdx context) (+ 1)
+  maskMap <- liftIO $ readIORef (wireMap context)
+  wIdx    <- liftIO $ readIORef (wireIdx context)
+  liftIO $ modifyIORef (wireIdx context) (+ 1)
+  -- select `r` be the color bit of wire b
+  let
+    (a0, a1)      = maskMap M.! a
+    (b0, b1)      = maskMap M.! b
+    colorA        = getColorBit a0
+    r             = getColorBit b0
+    (aes0, aes1)  = (initAES a0, initAES a1)
+    (aes2, aes3)  = (initAES b0, initAES b1)
+    offset        = freeOffset context
+    (cg, gCipher) = case colorA of
+      0 ->
+        -- garbler half gate
+        -- order: Enc_{A}(C)   <-- becomes {0}^n when color(a) == 0
+        --        Enc_{A⊕R}(C⊕(r * R))
+        --        C := Dec_{B}({0}^n)
+        let c0  = ctrCombine aes0 nullIV (BS.replicate 16 0)
+            out = ctrCombine aes1 nullIV $ case r of
+              0 -> c0
+              1 -> c0 `xorKey` offset
+        in  (c0, out)
+      1 -> case r of
+        0 ->
+          let c0  = ctrCombine aes1 nullIV (BS.replicate 16 0)
+              out = ctrCombine aes0 nullIV c0
+          in  (c0, out)
+        1 ->
+          let c1  = ctrCombine aes1 nullIV (BS.replicate 16 0)
+              out = ctrCombine aes0 nullIV (c1 `xorKey` offset)
+          in  (c1 `xorKey` offset, out)
+    -- evaluator half gate, no need to permute
+    ce = ctrCombine (if r == 0 then aes2 else aes3) nullIV (BS.replicate 16 0)
+    eCipher =
+      ctrCombine (if r == 0 then aes3 else aes2) nullIV (ce `xorKey` a0)
+    outFalse = cg `xorKey` ce
+    outTrue  = outFalse `xorKey` offset
+    gate     = Half idx (a, b) wIdx (gCipher, eCipher)
+  liftIO $ modifyIORef (wireMap context) (M.insert wIdx (outFalse, outTrue))
+  unless (isRemote context) $ liftIO $ modifyIORef (circuit context)
+                                                   (Seq.|> gate)
   sendGate gate
-  return out
- where
-  doubleEnc :: (AES128, AES128) -> Key -> Key
-  doubleEnc (a, b) = ctrCombine a nullIV . ctrCombine b nullIV
+  return wIdx
 
 freeXOR :: Int -> Int -> Builder Int
 freeXOR in0 in1 = do
