@@ -49,5 +49,5 @@ main = do
     a <- in64 Alice
     b <- in64 Bob
     runWith a b
-      $ leven (fmap word8 (BS.unpack "abc")) (fmap word8 (BS.unpack "bcd"))
+      $ leven (fmap word8 (BS.unpack "ab")) (fmap word8 (BS.unpack "bd"))
 
