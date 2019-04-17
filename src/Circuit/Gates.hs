@@ -21,6 +21,11 @@ notGate x = do
   k <- mkConstBit True
   freeXOR k x
 
+notGate' :: Int -> Int -> Builder Int
+notGate' i o = do
+  k <- mkConstBit True
+  freeXORHelper k i (Just o)
+
 orGate :: Int -> Int -> Builder Int
 orGate a b = do
   x  <- freeXOR a b
