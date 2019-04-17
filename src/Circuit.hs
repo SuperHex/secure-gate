@@ -14,19 +14,20 @@ import           Control.Monad.Reader
 import           Crypto.Cipher.AES
 import           Crypto.Cipher.Types
 import           Crypto.Error
-import           Crypto.Random                (getRandomBytes)
+import           Crypto.Random        (getRandomBytes)
 import           Data.Binary
 import           Data.Bits
-import qualified Data.ByteString              as BS
-import qualified Data.ByteString.Lazy         as LBS
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as LBS
 import           Data.IORef
-import           Data.List.Split              (chunksOf)
-import qualified Data.Map                     as M
-import           Data.Maybe                   (fromJust)
-import qualified Data.Sequence                as Seq
-import qualified Data.Vector.Mutable          as MV
-import           GHC.Generics                 (Generic)
+import           Data.List.Split      (chunksOf)
+import qualified Data.Map             as M
+import           Data.Maybe           (fromJust)
+import qualified Data.Sequence        as Seq
+import qualified Data.Vector.Mutable  as MV
+import           GHC.Generics         (Generic)
 import           System.ZMQ4.Monadic
+import           Utils                (BasicHashMap, newBasicHash, insertHash, lookupHash)
 
 type Key = BS.ByteString
 type Message = BS.ByteString
@@ -113,7 +114,7 @@ initAES k = case cipherInit k of
 ------------------------------------
 
 data Gate
-  = Const Int Int Key -- Const (gate index) (output wire index) (value)
+  = Const Int Key -- Const (output wire index) (value)
   | Free (Int, Int) Int
   | Half Int (Int, Int) Int (Key, Key)
   | Logic { index :: Int
@@ -127,7 +128,7 @@ instance Binary Gate
 instance Show Gate where
   show (Logic idx ipt out _) =
     "Gate " ++ show idx ++ ": " ++ show ipt ++ " -> " ++ show out
-  show (Const idx wire _) = "ConstBit " ++ show idx ++ ": wire[" ++ show wire ++ "]"
+  show (Const wire _) = "ConstBit " ++ ": wire[" ++ show wire ++ "]"
   show (Free i o) = "Free " ++ show i ++ " -> " ++ show o
 
 data Context z =  Context
@@ -169,22 +170,19 @@ getCircuit c = runZMQ $ do
     cir  <- liftIO (readIORef circ)
     return $ Seq.length cir
 
-evalCircuit :: (FiniteBits b) => Circuit -> M.Map Int Wire -> b -> b -> b
-evalCircuit = undefined
-
-evalGate :: MV.IOVector Key -> Gate -> IO (MV.IOVector Key)
-evalGate state (Const _ wire key) = do
-  MV.unsafeWrite state wire key
-  return state
-evalGate state (Free (i0, i1) o) = do
-  ki0 <- MV.unsafeRead state i0
-  ki1 <- MV.unsafeRead state i1
-  let out = ki0 `xorKey` ki1
-  MV.unsafeWrite state o out
-  return state
-evalGate state (Half _ (i0, i1) o (k0, k1)) = do
-  ki0 <- MV.unsafeRead state i0
-  ki1 <- MV.unsafeRead state i1
+evalGate :: BasicHashMap Int Key -> Gate -> IO ()
+evalGate hash (Const wire k) = do
+  query <- lookupHash hash wire
+  case query of
+    Nothing  -> insertHash hash wire k
+    (Just _) -> return ()
+evalGate hash (Free (i0, i1) o) = do
+  ki0 <- fromJust <$> lookupHash hash i0
+  ki1 <- fromJust <$> lookupHash hash i1
+  liftIO $ insertHash hash o (ki0 `xorKey` ki1)
+evalGate hash (Half _ (i0, i1) o (k0, k1)) = do
+  ki0 <- fromJust <$> lookupHash hash i0
+  ki1 <- fromJust <$> lookupHash hash i1
   -- get r⊕b/color bit from wire b
   let colorA       = getColorBit ki0
       rb           = getColorBit ki1
@@ -196,14 +194,13 @@ evalGate state (Half _ (i0, i1) o (k0, k1)) = do
         0 -> ctrCombine aesb nullIV (BS.replicate 16 0)
         1 -> ctrCombine aesb nullIV k1 `xorKey` ki0
       out = g `xorKey` e
-  MV.unsafeWrite state o out
-  return state
-evalGate state g = do
+  insertHash hash o out
+evalGate hash g = do
   let (in0, in1)               = inputs g
       out                      = outs g
       (row0, row1, row2, row3) = table g
-  ki0 <- MV.unsafeRead state in0
-  ki1 <- MV.unsafeRead state in1
+  ki0 <- fromJust <$> lookupHash hash in0
+  ki1 <- fromJust <$> lookupHash hash in1
   let row          = getRowFromKeys ki0 ki1
       (aes0, aes1) = (initAES ki0, initAES ki1)
       ko           = doubleDecrypt aes0 aes1 $ case row of
@@ -212,8 +209,7 @@ evalGate state g = do
         2 -> row2
         3 -> row3
         _ -> error "wrong color bits!"
-  MV.unsafeWrite state out ko
-  return state
+  insertHash hash out ko
   where doubleDecrypt a b = ctrCombine a nullIV . ctrCombine b nullIV
 
 eval :: Key -> Key -> Builder [Int] -> IO Key
@@ -225,23 +221,23 @@ eval a b c = runZMQ $ do
   let in0 = toBits . BS.unpack $ a
       in1 = toBits . BS.unpack $ b
   wireNum <- liftIO $ readIORef (wireIdx ctx)
-  state   <- liftIO $ MV.new wireNum
+  hash    <- liftIO newBasicHash
   -- setup initial state of input wires
   forM_ [0 .. length in0 - 1] $ \idx -> case M.lookup idx wires of
     Nothing -> error "input length exceed circuit's input"
     (Just (k0, k1)) ->
-      liftIO $ MV.unsafeWrite state idx (if in0 !! idx then k1 else k0)
+      liftIO $ insertHash hash idx (if in0 !! idx then k1 else k0)
   forM_ [0 .. length in1 - 1] $ \idx -> do
     let wireIndex = idx + length in0
     case M.lookup wireIndex wires of
       Nothing -> error "input length exceed circuit's input"
       (Just (k0, k1)) ->
-        liftIO $ MV.unsafeWrite state wireIndex (if in1 !! idx then k1 else k0)
+        liftIO $ insertHash hash wireIndex (if in1 !! idx then k1 else k0)
   -- evaluate all gates
   -- mapM_ (evalGate state) circ
-  liftIO $ foldM_ evalGate state circ
+  void . liftIO $ traverse (evalGate hash) circ
   outBits <- forM out $ \i -> do
-    k <- liftIO $ MV.read state i
+    k <- liftIO $ fromJust <$> lookupHash hash i
     let (k0, _) = wires M.! i
     return $ k /= k0
   return (BS.pack . fromBits $ outBits)
@@ -271,18 +267,26 @@ mkWire = do
   liftIO $ modifyIORef mapRef (M.insert idx keys)
   return idx
 
-halfAND :: Int -> Int -> Builder Int
-halfAND a b = do
+halfANDHelper :: Int -> Int -> Maybe Int -> Builder Int
+halfANDHelper a b o = do
   context <- ask
   idx     <- liftIO $ readIORef (gateIdx context)
   liftIO $ modifyIORef (gateIdx context) (+ 1)
   maskMap <- liftIO $ readIORef (wireMap context)
-  wIdx    <- liftIO $ readIORef (wireIdx context)
-  liftIO $ modifyIORef (wireIdx context) (+ 1)
+  wIdx    <- case o of
+    Nothing -> do
+      wIdx <- liftIO $ readIORef (wireIdx context)
+      liftIO $ modifyIORef (wireIdx context) (+ 1)
+      return wIdx
+    (Just widx) -> return widx
   -- select `r` be the color bit of wire b
   let
-    (a0, a1)      = maskMap M.! a
-    (b0, b1)      = maskMap M.! b
+    (a0, a1) = case M.lookup a maskMap of
+      Nothing   -> error $ "halfand: input wire" ++ show a ++ "does not exist"
+      (Just a') -> a'
+    (b0, b1) = case M.lookup b maskMap of
+      Nothing   -> error $ "halfand: input wire" ++ show b ++ "does not exist"
+      (Just b') -> b'
     colorA        = getColorBit a0
     r             = getColorBit b0
     (aes0, aes1)  = (initAES a0, initAES a1)
@@ -321,18 +325,31 @@ halfAND a b = do
   sendGate gate
   return wIdx
 
-freeXOR :: Int -> Int -> Builder Int
-freeXOR in0 in1 = do
+halfAND :: Int -> Int -> Builder Int
+halfAND a b = halfANDHelper a b Nothing
+
+freeXORHelper :: Int -> Int -> Maybe Int -> Builder Int
+freeXORHelper in0 in1 o = do
   context <- ask
   _       <- liftIO $ readIORef (gateIdx context)
   liftIO $ modifyIORef (gateIdx context) (+ 1)
   -- generate output wire C_0 = A⊕B, C_1 = A⊕B⊕R
   --   where A, B := False, R := offset
-  wire <- liftIO $ readIORef (wireIdx context)
-  liftIO $ modifyIORef (wireIdx context) (+ 1)
+  wire <- case o of
+    Nothing -> do
+      wIdx <- liftIO $ readIORef (wireIdx context)
+      liftIO $ modifyIORef (wireIdx context) (+ 1)
+      return wIdx
+    (Just widx) -> return widx
   maskMap <- liftIO $ readIORef (wireMap context)
-  let (a0, _)   = maskMap M.! in0
-      (b0, _)   = maskMap M.! in1
+  let (a0, _) = case M.lookup in0 maskMap of
+        Nothing ->
+          error $ "freexor: input wire" ++ show in0 ++ "does not exist"
+        (Just in0') -> in0'
+      (b0, _) = case M.lookup in1 maskMap of
+        Nothing ->
+          error $ "freexor: input wire" ++ show in1 ++ "does not exist"
+        (Just in1') -> in1'
       offset    = freeOffset context
       c@(c0, _) = (a0 `xorKey` b0, c0 `xorKey` offset)
       gate      = Free (in0, in1) wire
@@ -342,22 +359,40 @@ freeXOR in0 in1 = do
   sendGate gate
   return wire
 
+freeXOR :: Int -> Int -> Builder Int
+freeXOR a b = freeXORHelper a b Nothing
+
 mkConstBit :: Bool -> Builder Int
 mkConstBit b = do
-  out     <- mkWire
+  -- out     <- mkWire
+  -- context <- ask
+  -- wmap    <- liftIO (readIORef (wireMap context))
+  -- idx     <- liftIO (readIORef (gateIdx context))
+  -- liftIO $ modifyIORef (gateIdx context) (+ 1)
+  -- let (lo, hi) = wmap M.! out
+  --     key      = if b then hi else lo
+  --     gate     = Const idx out key
+  -- -- local evaluation
+  -- unless (isRemote context) $ liftIO $ modifyIORef (circuit context)
+  --                                                  (Seq.|> gate)
+  -- -- remote evaluation
+  -- sendGate gate
+  -- return out
   context <- ask
-  wmap    <- liftIO (readIORef (wireMap context))
-  idx     <- liftIO (readIORef (gateIdx context))
   liftIO $ modifyIORef (gateIdx context) (+ 1)
-  let (lo, hi) = wmap M.! out
-      key      = if b then hi else lo
-      gate     = Const idx out key
-  -- local evaluation
+  wmap <- liftIO $ readIORef (wireMap context)
+  gate <- case M.lookup (if b then -1 else -2) wmap of
+    Nothing -> do
+      offset  <- asks freeOffset
+      (lo, _) <- liftIO $ genAESKeyPair128With offset
+      liftIO $ modifyIORef (wireMap context)
+                           (M.insert (if b then -1 else -2) (lo, lo))
+      return $ Const (if b then -1 else -2) lo
+    (Just (lo, _)) -> return $ Const (if b then -1 else -2) lo
   unless (isRemote context) $ liftIO $ modifyIORef (circuit context)
                                                    (Seq.|> gate)
-  -- remote evaluation
   sendGate gate
-  return out
+  return 0
 
 sendGate :: Gate -> Builder ()
 sendGate gate = do

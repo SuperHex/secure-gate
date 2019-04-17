@@ -10,18 +10,18 @@ import           Control.Monad.Reader
 import           Crypto.Cipher.Types     (ctrCombine, nullIV)
 import           Data.Binary
 import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Lazy    as LBS (fromStrict, toStrict)
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Lazy    as LBS (ByteString, fromStrict, toStrict)
 import qualified Data.HashTable.IO       as H
-import qualified Data.HashTable.ST.Basic as Basic (HashTable)
 import           Data.IORef
 import           Data.List.NonEmpty      (fromList, toList, NonEmpty)
 import qualified Data.Map                as M
 import           Data.Maybe              (fromJust)
 import           Data.String             (fromString)
 import           System.ZMQ4.Monadic
+import           Utils                   (BasicHashMap, newBasicHash, insertHash, lookupHash)
 
 type Address = String
-type BasicHashMap k v = H.IOHashTable (Basic.HashTable) k v
 
 initServer :: Address -> forall z . ZMQ z (Socket z Rep)
 initServer addr = do
@@ -66,7 +66,7 @@ runServer prog msg sock = do
     (decode @Int (LBS.fromStrict result))
 
 
-runClient :: Key -> (forall z . Socket z Req -> ZMQ z ())
+runClient :: Key -> (forall z . Socket z Req -> ZMQ z LBS.ByteString)
 runClient msg sock = do
   -- 1. request Alice's input
   send sock [] "give alice's input"
@@ -79,12 +79,12 @@ runClient msg sock = do
   bob <- receiveMulti sock
 
   -- 3. initialize the environment
-  hm  <- liftIO $ H.new @Basic.HashTable
+  hm  <- liftIO newBasicHash
   liftIO $ forM_ (zip [0 :: Int ..] alice) $ \(num, bit) -> do
     -- assume received keys are ordered
-    H.insert hm num bit
+    insertHash hm num bit
   liftIO $ forM_ (zip [length alice ..] bob) $ \(num, bit) -> do
-    H.insert hm num bit
+    insertHash hm num bit
 
   -- 4. evaluate received gates until receive SIGTERM
   whileM_ (send sock [] "gates" >> receive sock) (/= "SIGTERM") $ \gate -> do
@@ -99,19 +99,19 @@ runClient msg sock = do
   send sock [] "out"
   out <- receiveMulti sock
   let outWires = fmap (decode @Int . LBS.fromStrict) out
-  outVal <- liftIO $ mapM (fmap fromJust . H.lookup hm) outWires
+  outVal <- liftIO $ mapM (fmap fromJust . lookupHash hm) outWires
 
   -- 6. retrive real value
   send sock [] "dict"
   keys <- receiveMulti sock
-  let ks = fmap (decode @(Key, Key) . LBS.fromStrict) keys
-      result' =
-        fromFiniteBits @Int $ fmap (\(b, (lo, _)) -> b /= lo) (zip outVal ks)
+  let ks      = fmap (decode @(Key, Key) . LBS.fromStrict) keys
+      result' = fmap (\(b, (lo, _)) -> b /= lo) (zip outVal ks)
   -- 7. send back results
-  send sock [] (LBS.toStrict $ encode (result' :: Int))
+  send sock [] (LBS.toStrict $ encode (fromFiniteBits result' :: Int))
   void $ receive sock
   -- print result
-  liftIO $ print result'
+  -- liftIO $ print result'
+  pure . BB.toLazyByteString . BB.byteStringHex . BS.pack . fromBits $ result'
  where
   whileM_ :: Monad m => m a -> (a -> Bool) -> (a -> m b) -> m ()
   whileM_ pred test act = do
@@ -119,39 +119,4 @@ runClient msg sock = do
     when (test a) (act a >> whileM_ pred test act)
 
 evalGateR :: BasicHashMap Int Key -> Gate -> ZMQ z ()
-evalGateR hash (Const _ wire k ) = liftIO $ H.insert hash wire k
-evalGateR hash (Free (i0, i1) o) = do
-  ki0 <- liftIO $ fromJust <$> H.lookup hash i0
-  ki1 <- liftIO $ fromJust <$> H.lookup hash i1
-  liftIO $ H.insert hash o (ki0 `xorKey` ki1)
-evalGateR hash (Half _ (i0, i1) o (k0, k1)) = do
-  ki0 <- liftIO $ fromJust <$> H.lookup hash i0
-  ki1 <- liftIO $ fromJust <$> H.lookup hash i1
-  -- get r⊕b/color bit from wire b
-  let colorA       = getColorBit ki0
-      rb           = getColorBit ki1
-      (aesa, aesb) = (initAES ki0, initAES ki1)
-      g            = case colorA of
-        0 -> ctrCombine aesa nullIV (BS.replicate 16 0)
-        1 -> ctrCombine aesa nullIV k0
-      e = case rb of
-        0 -> ctrCombine aesb nullIV (BS.replicate 16 0)
-        1 -> ctrCombine aesb nullIV k1 `xorKey` ki0
-      out = g `xorKey` e
-  liftIO $ H.insert hash o out
-evalGateR hash g = do
-  let (in0, in1)               = inputs g
-      out                      = outs g
-      (row0, row1, row2, row3) = table g
-  ki0 <- liftIO $ fromJust <$> H.lookup hash in0
-  ki1 <- liftIO $ fromJust <$> H.lookup hash in1
-  let row          = getRowFromKeys ki0 ki1
-      (aes0, aes1) = (initAES ki0, initAES ki1)
-      ko           = doubleDecrypt aes0 aes1 $ case row of
-        0 -> row0
-        1 -> row1
-        2 -> row2
-        3 -> row3
-        _ -> error "wrong color bits!"
-  liftIO $ H.insert hash out ko
-  where doubleDecrypt a b = ctrCombine a nullIV . ctrCombine b nullIV
+evalGateR b g = liftIO $ evalGate b g
