@@ -3,7 +3,7 @@
 
 module Circuit.Wire where
 
-import           Circuit              (Builder, mkWire, Context(..), toBits)
+import           Circuit              (Builder, mkWire, Context(..))
 import           Control.Monad        (replicateM)
 import           Control.Monad.Reader
 import           Data.Binary          (decode)
@@ -13,6 +13,7 @@ import           Data.IORef
 import           Data.List.NonEmpty   (fromList)
 import qualified Data.Map             as M
 import           System.ZMQ4.Monadic
+import           Utils                (bytesToBits)
 
 data Party = Alice | Bob
 
@@ -50,7 +51,7 @@ sendLocalInput ws = do
       inpt    <- asks localInput
       wireRef <- asks wireMap
       wires   <- liftIO $ readIORef wireRef
-      let bin  = toBits . BS.unpack $ inpt
+      let bin  = bytesToBits . BS.unpack $ inpt
           keys = flip fmap (zip ws bin) $ \(idx, bit) ->
             let (lo, hi) = wires M.! idx in if bit then hi else lo
       void . lift . receive $ sock

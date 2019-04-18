@@ -3,10 +3,10 @@
 module Circuit.Gates where
 
 import           Circuit
-import           Circuit.Wire
 import           Control.Monad.Reader
 import qualified Data.ByteString      as BS
 import           Data.List.Split
+import           Utils                (bytesToBits)
 
 -- Note: All input bits are ordered as
 --         LSB ------> MSB
@@ -14,7 +14,7 @@ import           Data.List.Split
 type Index = Int
 
 mkConst :: BS.ByteString -> Builder [Int]
-mkConst s = traverse mkConstBit (toBits $ BS.unpack s)
+mkConst s = traverse mkConstBit (bytesToBits $ BS.unpack s)
 
 notGate :: Int -> Builder Int
 notGate x = do
@@ -71,8 +71,6 @@ adderC (x : xs) (y : ys) = do
   (s1, c1) <- adderN xs ys c
   return (s : s1, c1)
 
-(<+>) = adder
-
 halfSubtractor :: Index -> Index -> Builder (Index, Index)
 halfSubtractor x y = do
   o0 <- freeXOR x y
@@ -101,8 +99,6 @@ subtractor (x : xs) (y : ys) = do
   (d, b) <- halfSubtractor x y
   diffs  <- subtractorN xs ys b
   return (d : diffs)
-
-(<->) = subtractor
 
 mux :: Index -> Index -> Index -> Builder Index
 mux s a b = do

@@ -7,19 +7,16 @@ module Network.Pair where
 import           Circuit
 import           Control.Monad
 import           Control.Monad.Reader
-import           Crypto.Cipher.Types     (ctrCombine, nullIV)
 import           Data.Binary
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy    as LBS (ByteString, fromStrict, toStrict)
-import qualified Data.HashTable.IO       as H
 import           Data.IORef
-import           Data.List.NonEmpty      (fromList, toList, NonEmpty)
+import           Data.List.NonEmpty      (fromList)
 import qualified Data.Map                as M
 import           Data.Maybe              (fromJust)
-import           Data.String             (fromString)
 import           System.ZMQ4.Monadic
-import           Utils                   (BasicHashMap, newBasicHash, insertHash, lookupHash)
+import           Utils
 
 type Address = String
 
@@ -45,9 +42,8 @@ runServer prog msg sock = do
   -- 1. initialize context
   ctx        <- liftIO $ initCircuitRemote sock msg
   -- 2. build and send circuit lazily
-  (out, ref) <- flip runReaderT
-                     ctx
-                     (prog >>= \o -> liftM2 (,) (pure o) (asks wireMap))
+  (out, ref) <- runReaderT (prog >>= \o -> liftM2 (,) (pure o) (asks wireMap))
+                           ctx
   -- 3. tell the client that all gates are sent
   void $ receive sock
   send sock [] "SIGTERM"
@@ -75,25 +71,20 @@ runClient msg sock = do
   -- 2. request Bob's input through oblivious transfer
   sendMulti
     sock
-    (fromList . fmap (LBS.toStrict . encode) . toBits . BS.unpack $ msg)
+    (fromList . fmap (LBS.toStrict . encode) . bytesToBits . BS.unpack $ msg)
   bob <- receiveMulti sock
 
   -- 3. initialize the environment
   hm  <- liftIO newBasicHash
-  liftIO $ forM_ (zip [0 :: Int ..] alice) $ \(num, bit) -> do
-    -- assume received keys are ordered
-    insertHash hm num bit
-  liftIO $ forM_ (zip [length alice ..] bob) $ \(num, bit) -> do
-    insertHash hm num bit
+  liftIO $ forM_ (zip [0 :: Int ..] alice) $ uncurry (insertHash hm)
+  liftIO $ forM_ (zip [length alice ..] bob) $ uncurry (insertHash hm)
 
   -- 4. evaluate received gates until receive SIGTERM
   whileM_ (send sock [] "gates" >> receive sock) (/= "SIGTERM") $ \gate -> do
     let gate' = decodeOrFail @Gate (LBS.fromStrict gate)
     case gate' of
       (Left  (_, _, e)) -> fail e
-      (Right (_, _, g)) -> do
-        -- liftIO . putStrLn $ "Received " ++ show g
-        evalGateR hm g
+      (Right (_, _, g)) -> evalGateR hm g
 
   -- 5. retrive output wires
   send sock [] "out"
@@ -107,11 +98,16 @@ runClient msg sock = do
   let ks      = fmap (decode @(Key, Key) . LBS.fromStrict) keys
       result' = fmap (\(b, (lo, _)) -> b /= lo) (zip outVal ks)
   -- 7. send back results
-  send sock [] (LBS.toStrict $ encode (fromFiniteBits result' :: Int))
+  send sock [] (LBS.toStrict $ encode (toFinite result' :: Int))
   void $ receive sock
   -- print result
   -- liftIO $ print result'
-  pure . BB.toLazyByteString . BB.byteStringHex . BS.pack . fromBits $ result'
+  pure
+    . BB.toLazyByteString
+    . BB.byteStringHex
+    . BS.pack
+    . bitsToBytes
+    $ result'
  where
   whileM_ :: Monad m => m a -> (a -> Bool) -> (a -> m b) -> m ()
   whileM_ pred test act = do

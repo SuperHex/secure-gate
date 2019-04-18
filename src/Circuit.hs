@@ -16,7 +16,6 @@ import           Data.Bits
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.IORef
-import           Data.List.Split      (chunksOf)
 import qualified Data.Map             as M
 import           Data.Maybe           (fromJust)
 import qualified Data.Sequence        as Seq
@@ -130,8 +129,8 @@ eval a b c = runZMQ $ do
   (out, ctx) <- flip runReaderT context $ c >>= \os -> (,) <$> pure os <*> ask
   circ       <- liftIO $ readIORef (circuit ctx)
   wires      <- liftIO $ readIORef (wireMap ctx)
-  let in0 = toBits . BS.unpack $ a
-      in1 = toBits . BS.unpack $ b
+  let in0 = bytesToBits . BS.unpack $ a
+      in1 = bytesToBits . BS.unpack $ b
   wireNum <- liftIO $ readIORef (wireIdx ctx)
   hash    <- liftIO newBasicHash
   -- setup initial state of input wires
@@ -152,20 +151,7 @@ eval a b c = runZMQ $ do
     k <- liftIO $ fromJust <$> lookupHash hash i
     let (k0, _) = wires M.! i
     return $ k /= k0
-  return (BS.pack . fromBits $ outBits)
-
-fromBits :: [Bool] -> [Word8]
-fromBits = fmap fromFiniteBits . chunksOf 8
-
-toBits :: [Word8] -> [Bool]
-toBits = concatMap finiteToBits
-
-finiteToBits :: (FiniteBits b) => b -> [Bool]
-finiteToBits b = fmap (testBit b) [0 .. finiteBitSize b - 1]
-
-fromFiniteBits :: (FiniteBits b) => [Bool] -> b
-fromFiniteBits = foldr f zeroBits
-  where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
+  return (BS.pack . bitsToBytes $ outBits)
 
 mkWire :: Builder Int
 mkWire = do

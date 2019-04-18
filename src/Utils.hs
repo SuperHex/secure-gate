@@ -21,6 +21,11 @@ module Utils
   , setColor
   , getRowFromKeys
   , shuffle
+  -- bit manipulation
+  , bitsToBytes
+  , bytesToBits
+  , fromFinite
+  , toFinite
   -- other
   , genOffset
   , xorKey
@@ -34,6 +39,7 @@ import           Data.Bits
 import qualified Data.ByteString         as BS
 import qualified Data.HashTable.IO       as H
 import qualified Data.HashTable.ST.Basic as Basic
+import           Data.List.Split         (chunksOf)
 import           Data.Word
 import           GHC.Prim                (RealWorld)
 
@@ -146,3 +152,21 @@ initAES k = case cipherInit k of
   CryptoFailed e -> error (show e)
   CryptoPassed c -> c
 
+
+-- bit manipulation
+-- | group 8 bits into a byte
+bitsToBytes :: [Bool] -> [Word8]
+bitsToBytes = fmap toFinite . chunksOf 8
+
+-- | decode a list of bytes into a list of bits
+bytesToBits :: [Word8] -> [Bool]
+bytesToBits = concatMap fromFinite
+
+-- | decode a number into a list of bits
+fromFinite :: (FiniteBits b) => b -> [Bool]
+fromFinite b = fmap (testBit b) [0 .. finiteBitSize b - 1]
+
+-- | encode a number from a list of bits
+toFinite :: (FiniteBits b) => [Bool] -> b
+toFinite = foldr f zeroBits
+  where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
