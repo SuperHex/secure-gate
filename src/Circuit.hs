@@ -11,10 +11,6 @@ module Circuit where
 
 import           Control.Monad
 import           Control.Monad.Reader
-import           Crypto.Cipher.AES
-import           Crypto.Cipher.Types
-import           Crypto.Error
-import           Crypto.Random        (getRandomBytes)
 import           Data.Binary
 import           Data.Bits
 import qualified Data.ByteString      as BS
@@ -27,91 +23,7 @@ import qualified Data.Sequence        as Seq
 import qualified Data.Vector.Mutable  as MV
 import           GHC.Generics         (Generic)
 import           System.ZMQ4.Monadic
-import           Utils                (BasicHashMap, newBasicHash, insertHash, lookupHash)
-
-type Key = BS.ByteString
-type Message = BS.ByteString
-type CipherText = BS.ByteString
-
-genAESKey :: Int -> IO Key
-genAESKey = getRandomBytes
-
-setColor :: Word8 -> Word8 -> Key -> Key
-setColor color pos =
-  BS.pack
-    . (\x -> init x ++ [clearBit (last x) 0 `xor` color `xor` pos])
-    . BS.unpack
-
-genColor :: IO Word8
-genColor = (.&. 0x01) . BS.last <$> genAESKey 16
-
-genAESKeyPair :: Int -> IO (Key, Key)
-genAESKeyPair size = do
-  k0    <- genAESKey size
-  k1    <- genAESKey size
-  color <- genColor
-  return (setColor color 0 k0, setColor color 1 k1)
-
-genOffset :: Int -> IO Key
-genOffset size = do
-  r <- genAESKey size
-  return $ setColor 1 0 r
-
-xorKey :: BS.ByteString -> BS.ByteString -> BS.ByteString
-xorKey a = BS.pack . BS.zipWith xor a
-
-genAESKeyPairWith :: Int -> Key -> IO (Key, Key)
-genAESKeyPairWith size offset = do
-  k0    <- genAESKey size
-  color <- genColor
-  let k0' = setColor color 0 k0
-      -- we assume LSB(offset) == 1
-      -- in order to generate different label
-      -- k1 := k0 ⊕ offset
-      k1  = k0' `xorKey` offset
-  return (k0', k1)
-
-genAESKeyPair128, genAESKeyPair256 :: IO (Key, Key)
-genAESKeyPair128 = genAESKeyPair 16 -- 128 `div` 8
-genAESKeyPair256 = genAESKeyPair 32 -- 256 `div` 8
-
-genAESKeyPair128With = genAESKeyPairWith 16
-genAESKeyPair256With = genAESKeyPairWith 32
-
-getColorBit :: Key -> Word8
-getColorBit = (.&. 0x01) . BS.last
-
-getRowFromKeys :: Key -> Key -> Word8
-getRowFromKeys k0 k1 = (getColorBit k0 `shiftL` 1) + getColorBit k1
-
-shuffle :: Word8 -> Word8 -> Table -> Table
-shuffle c0 c1 t@(a, b, c, d) = case c0 of
-  0 -> case c1 of
-    0 -> t
-    1 -> (b, a, d, c)
-    _ -> error $ "Error: unknown color bit " ++ show c1
-  1 -> case c1 of
-    0 -> (c, d, a, b)
-    1 -> (d, c, b, a)
-    _ -> error $ "Error: unknown color bit " ++ show c1
-  _ -> error $ "Error: unknown color bit " ++ show c0
-
-
--- newtype TruthTable = TT { evalTable :: (Key, Key, Key, Key) }
-type Wire = (Key, Key)
-type Table = (Key, Key, Key, Key)
-
-initCipher :: forall c . (BlockCipher c) => Key -> Either CryptoError c
-initCipher k = case cipherInit k of
-  CryptoFailed e -> Left e
-  CryptoPassed c -> Right c
-
-initAES :: Key -> AES128
-initAES k = case cipherInit k of
-  CryptoFailed e -> error (show e)
-  CryptoPassed c -> c
-
-------------------------------------
+import           Utils
 
 data Gate
   = Const Int Key -- Const (output wire index) (value)
@@ -184,8 +96,8 @@ evalGate hash (Half _ (i0, i1) o (k0, k1)) = do
   ki0 <- fromJust <$> lookupHash hash i0
   ki1 <- fromJust <$> lookupHash hash i1
   -- get r⊕b/color bit from wire b
-  let colorA       = getColorBit ki0
-      rb           = getColorBit ki1
+  let colorA       = getColor ki0
+      rb           = getColor ki1
       (aesa, aesb) = (initAES ki0, initAES ki1)
       g            = case colorA of
         0 -> ctrCombine aesa nullIV (BS.replicate 16 0)
@@ -287,8 +199,8 @@ halfANDHelper a b o = do
     (b0, b1) = case M.lookup b maskMap of
       Nothing   -> error $ "halfand: input wire" ++ show b ++ "does not exist"
       (Just b') -> b'
-    colorA        = getColorBit a0
-    r             = getColorBit b0
+    colorA        = getColor a0
+    r             = getColor b0
     (aes0, aes1)  = (initAES a0, initAES a1)
     (aes2, aes3)  = (initAES b0, initAES b1)
     offset        = freeOffset context
