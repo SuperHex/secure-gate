@@ -4,6 +4,7 @@
 
 module Utils
   ( module Crypto.Cipher.Types
+  , module Data.List.Split
   , BasicHashMap
   , BasicHashT
   , Key, Wire, Table

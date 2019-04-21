@@ -20,6 +20,7 @@ import           Language.Extension
 import           Network.Pair
 import           System.Environment         (getArgs)
 import           System.ZMQ4.Monadic
+import           Utils
 
 main :: IO ()
 main = do
@@ -29,7 +30,7 @@ main = do
       "server" ->
         let y' = case xs of
               (_ : y : []) ->
-                BS.pack . fromBits . finiteToBits $ (read y :: Int)
+                BS.pack . bitsToBytes . fromFinite $ (read y :: Int)
               (y : []) -> BSC.pack y
         in  runZMQ $ do
               sock <- initServer "tcp://127.0.0.1:1145"
@@ -37,13 +38,13 @@ main = do
       "client" ->
         let y' = case xs of
               (_ : y : []) ->
-                BS.pack . fromBits . finiteToBits $ (read y :: Int)
+                BS.pack . bitsToBytes . fromFinite $ (read y :: Int)
               (y : []) -> BSC.pack y
         in  runZMQ $ do
               sock <- initClient "tcp://127.0.0.1:1145"
               hex  <- runClient y' sock
               liftIO . putStrLn . LBSC.unpack $ hex
-        -- y' = BS.pack . fromBits . finiteToBits $ (read y :: Int)
+        -- y' = BS.pack . fromBits . fromFinite $ (read y :: Int)
     --   in  do
     --         str <- eval x' y' prog
     --         print . fromFiniteBits @Int . toBits . BS.unpack $ str
