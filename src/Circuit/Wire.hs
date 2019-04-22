@@ -3,7 +3,7 @@
 
 module Circuit.Wire where
 
-import           Circuit              (Builder, mkWire, Context(..))
+import           Circuit.Class
 import           Control.Monad        (replicateM)
 import           Control.Monad.Reader
 import           Data.Binary          (decode)
@@ -18,23 +18,23 @@ import           Utils                (bytesToBits)
 data Party = Alice | Bob
 
 {-# INLINE in8 #-}
-in8 :: Party -> Builder [Int]
+in8 :: Party -> Builder z [Int]
 in8 = inN 8
 
 {-# INLINE in16 #-}
-in16 :: Party -> Builder [Int]
+in16 :: Party -> Builder z [Int]
 in16 = inN 16
 
 {-# INLINE in32 #-}
-in32 :: Party -> Builder [Int]
+in32 :: Party -> Builder z [Int]
 in32 = inN 32
 
 {-# INLINE in64 #-}
-in64 :: Party -> Builder [Int]
+in64 :: Party -> Builder z [Int]
 in64 = inN 64
 
 {-# INLINE inN #-}
-inN :: Int -> Party -> Builder [Int]
+inN :: Int -> Party -> Builder z [Int]
 inN n p = do
   w <- replicateM n mkWire
   case p of
@@ -42,8 +42,8 @@ inN n p = do
     Bob   -> replyOT w
   return w
 
-sendLocalInput :: [Int] -> Builder ()
-sendLocalInput ws = do
+sendLocalInput :: [Int] -> Builder z ()
+sendLocalInput ws = Builder $ do
   zmq <- asks zmqSocket
   case zmq of
     Nothing     -> return ()
@@ -57,8 +57,8 @@ sendLocalInput ws = do
       void . lift . receive $ sock
       lift $ sendMulti sock (fromList keys)
 
-replyOT :: [Int] -> Builder ()
-replyOT ws = do
+replyOT :: [Int] -> Builder z ()
+replyOT ws = Builder $ do
   zmq <- asks zmqSocket
   case zmq of
     Nothing     -> return ()

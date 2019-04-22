@@ -3,7 +3,7 @@
 
 module Circuit.Parser where
 
-import           Circuit
+import           Circuit.Class
 import           Circuit.Gates
 import           Circuit.Wire
 import           Control.Monad.Reader
@@ -37,11 +37,11 @@ parseHeader lines = Header (nums !! 1) (numIO !! 0) (numIO !! 1) (numIO !! 4)
   nums  = fmap parseText (head lines)
   numIO = fmap parseText (lines !! 1)
 
-parse :: [[LBS.ByteString]] -> (forall z . ReaderT (Context z) (ZMQ z) ())
+parse :: [[LBS.ByteString]] -> Builder z ()
 parse lines = do
   mapM_ go lines
  where
-  go :: [LBS.ByteString] -> Builder Int
+  go :: [LBS.ByteString] -> Builder z Int
   go [] = return 0
   go [_, _, i, o, _] =
     let (Just (i', _)) = LBS.readInt i
@@ -57,7 +57,7 @@ parse lines = do
           x     -> error $ "unknown gate " ++ show x
   go x = error $ "unknown pattern" ++ show x
 
-parseRun :: FilePath -> Builder [Int]
+parseRun :: FilePath -> Builder z [Int]
 parseRun file = do
   lines <- liftIO $ parseLine file
   let header = parseHeader lines

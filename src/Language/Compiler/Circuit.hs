@@ -4,7 +4,7 @@
 
 module Language.Compiler.Circuit where
 
-import           Circuit
+import           Circuit.Class
 import           Circuit.Gates
 import           Circuit.Wire
 import           Control.Monad      (liftM2)
@@ -16,21 +16,22 @@ import           Data.Word
 import           Language.Core
 import           Language.Extension
 import           Prelude            hiding (pred)
+import           Utils
 
 data W a = Bit Bool | Lit Int [Bool] | Wires [Int] | Func a
   deriving Show
 
-newtype C st a = C { circ :: [Int] -> [Int] -> Builder [Int] }
+newtype C z st a = C { circ :: [Int] -> [Int] -> Builder z [Int] }
 
-runWith :: [Int] -> [Int] -> C st a -> Builder [Int]
+runWith :: [Int] -> [Int] -> (forall z . C z st a -> Builder z [Int])
 runWith x y c = circ c x y
 
 const2 :: a -> b -> c -> a
 const2 a _ _ = a
 
-instance Core C where
-  word8 n = C $ const2 $ mkConst (BS.pack . fromBits . finiteToBits $ n)
-  int n = C $ const2 $ mkConst (BS.pack . fromBits . finiteToBits $ n)
+instance Core (C z) where
+  word8 n = C $ const2 $ mkConst (BS.pack . bitsToBytes . fromFinite $ n)
+  int n = C $ const2 $ mkConst (BS.pack . bitsToBytes . fromFinite $ n)
   bool b = C $ const2 $ mkConstBit b >>= \a -> return [a]
   a .+ b = C $ \i0 i1 -> do
     a' <- circ a i0 i0

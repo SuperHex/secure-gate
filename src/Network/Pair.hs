@@ -4,7 +4,8 @@
 
 module Network.Pair where
 
-import           Circuit
+import           Circuit.Class
+import           Circuit.Eval
 import           Control.Monad
 import           Control.Monad.Reader
 import           Data.Binary
@@ -37,13 +38,14 @@ initClient addr = do
   liftIO . putStrLn $ "connected. now running ..."
   return sock
 
-runServer :: Builder [Int] -> Key -> (forall z . Socket z Rep -> ZMQ z ())
-runServer prog msg sock = do
+runServer :: Key -> (forall z . Builder z [Int] -> Socket z Rep -> ZMQ z ())
+runServer msg prog sock = do
   -- 1. initialize context
-  ctx        <- liftIO $ initCircuitRemote sock msg
+  ctx        <- initCircuitRemote msg sock
   -- 2. build and send circuit lazily
-  (out, ref) <- runReaderT (prog >>= \o -> liftM2 (,) (pure o) (asks wireMap))
-                           ctx
+  (out, ref) <- runReaderT
+    (runBuilder prog >>= \o -> liftM2 (,) (pure o) (asks wireMap))
+    ctx
   -- 3. tell the client that all gates are sent
   void $ receive sock
   send sock [] "SIGTERM"

@@ -4,7 +4,7 @@
 
 module Main where
 
-import           Circuit
+import           Circuit.Class
 import           Circuit.Gates
 import           Circuit.Parser
 import           Circuit.Wire
@@ -34,7 +34,7 @@ main = do
               (y : []) -> BSC.pack y
         in  runZMQ $ do
               sock <- initServer "tcp://127.0.0.1:1145"
-              runServer prog y' sock
+              runServer y' prog sock
       "client" ->
         let y' = case xs of
               (_ : y : []) ->

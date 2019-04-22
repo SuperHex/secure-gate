@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 3ab2c515b8712da1cbc6e0dffcdd89f676a69f491562a5aa4c3f5466d1b51772
+-- hash: da0d16dd3f5fbe3d3de4fb547af032e1861c1a6b9eef1f46e3cd458624028edb
 
 name:           secure-gate
 version:        0.1.0.0
@@ -27,8 +27,8 @@ source-repository head
 
 library
   exposed-modules:
-      Circuit
       Circuit.Class
+      Circuit.Eval
       Circuit.Gates
       Circuit.Parser
       Circuit.Wire
