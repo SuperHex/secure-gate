@@ -48,18 +48,6 @@ class Core (repr :: Type -> Type -> Type) where
 lam2 f = lam (lam . f)
 app2 f a = app (app f a)
 
--- class Hardware (repr :: Type -> Type) where
---   high :: repr Bool
---   low :: repr Bool
---   (.&&.) :: repr [Bool] -> repr [Bool] -> repr [Bool]
---   batch :: [repr Bool] -> repr [Bool]
-
--- newtype H repr a = H { unH :: repr [Bool] }
-
--- instance (Hardware repr) => Core (H repr) where
---   int n = H $ batch (replicate 10 high)
---   a .+ b = H $ unH a .&&. unH b
-
 -- instance Hardware Pretty where
 --   high = P $ \t -> "h" ++ show t
 --   low = P $ \t -> "l" ++ show t

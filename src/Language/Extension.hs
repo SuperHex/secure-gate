@@ -1,7 +1,22 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE TypeFamilies #-}
+
 module Language.Extension where
 
 import Language.Core
 import Data.Word
+import GHC.TypeLits
+import Circuit
+import Data.Proxy
+
 
 minimum_ :: (Core repr, Foldable t, Ord st, Ord b) => t (repr st b) -> repr st b
 minimum_ = foldr1 (\a b -> if_ (a .<= b) a b)
@@ -22,3 +37,17 @@ leven s1 s2 = last
    where
     calc z (c1, x, y) = minimum_
       [y .+ word8 1, z .+ word8 1, x .+ if_ (c1 .!= c) (word8 1) (word8 0)]
+
+scanlM :: (Monad m) => (m b -> m a -> m b) -> m b -> [m a] -> m [b]
+scanlM _ _ []       = pure []
+scanlM f i (x : xs) = do
+  a <- f i x
+  (a :) <$> scanlM f (pure a) xs
+
+class (Core repr) => List repr where
+  arr :: forall st (a :: *) . [repr st a] -> repr st [a]
+  hd :: repr st [a] -> repr st a
+  tl :: repr st [a] -> repr st [a]
+
+class (Core repr, List repr) => Scan repr where
+  scan :: repr st (b -> a -> b) -> repr st b -> repr st [a] -> repr st [b]
