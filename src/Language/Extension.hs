@@ -8,24 +8,26 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Language.Extension where
 
 import Language.Core
 import Data.Word
 import GHC.TypeLits
-import Circuit
+import Circuit.Class
 import Data.Proxy
+import Data.Coerce
 
 
-minimum_ :: (Core repr, Foldable t, Ord st, Ord b) => t (repr st b) -> repr st b
-minimum_ = foldr1 (\a b -> if_ (a .<= b) a b)
+minimum_ :: (Fold repr, Ord st, Ord b) => repr st [b] -> repr st b
+minimum_ xs = rFold (lam2 $ \a b -> if_ (a .<= b) a b) (hd xs) (tl xs)
 
-maximum_ :: (Core repr, Foldable t, Ord st, Ord b) => t (repr st b) -> repr st b
-maximum_ = foldr1 (\a b -> if_ (a .<= b) b a)
+maximum_ :: (Fold repr, Ord st, Ord b) => repr st [b] -> repr st b
+maximum_ xs = rFold (lam2 $ \a b -> if_ (a .<= b) b a) (hd xs) (tl xs)
 
 leven
-  :: (Core repr, Eq st)
+  :: (Fold repr, Eq st)
   => [repr st Word8]
   -> [repr st Word8]
   -> repr Word8 Word8
@@ -35,14 +37,14 @@ leven s1 s2 = last
    -- TODO: share intermidiate value in scanl
   transform ns@(n : ns1) c = scanl calc (n .+ word8 1) $ zip3 s1 ns ns1
    where
-    calc z (c1, x, y) = minimum_
+    calc z (c1, x, y) = minimum_ $ arr
       [y .+ word8 1, z .+ word8 1, x .+ if_ (c1 .!= c) (word8 1) (word8 0)]
 
-scanlM :: (Monad m) => (m b -> m a -> m b) -> m b -> [m a] -> m [b]
+scanlM :: (Monad m) => (b -> a -> m b) -> b -> [a] -> m [b]
 scanlM _ _ []       = pure []
 scanlM f i (x : xs) = do
   a <- f i x
-  (a :) <$> scanlM f (pure a) xs
+  (a :) <$> scanlM f a xs
 
 class (Core repr) => List repr where
   arr :: forall st (a :: *) . [repr st a] -> repr st [a]
@@ -50,4 +52,15 @@ class (Core repr) => List repr where
   tl :: repr st [a] -> repr st [a]
 
 class (Core repr, List repr) => Scan repr where
-  scan :: repr st (b -> a -> b) -> repr st b -> repr st [a] -> repr st [b]
+  scan :: repr (repr st1 b -> repr (repr st2 a -> repr st3 b) (a -> b)) (b -> a -> b) -> repr st1 b -> repr st2 [a] -> repr st3 [b]
+
+class (Core repr, List repr) => Fold repr where
+  lFold :: repr (repr st1 b -> repr (repr st2 a -> repr st3 b) (a -> b)) (b -> a -> b) -> repr st1 b -> repr st2 [a] -> repr st1 b
+  rFold :: repr (repr st1 a -> repr (repr st2 b -> repr st3 b) (a -> b)) (a -> b -> b) -> repr st1 b -> repr st2 [a] -> repr st1 b
+
+data Var a
+
+class (Core repr) => Variable repr where
+  intVar :: String -> repr (Var Int) (Var Int)
+  readVar :: repr (Var a) (Var a) -> repr a a
+  writeVar :: repr (Var a) (Var a) -> repr a a -> repr () ()

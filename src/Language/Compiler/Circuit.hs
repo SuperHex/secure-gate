@@ -21,7 +21,7 @@ import           Prelude              hiding (pred)
 import           System.ZMQ4.Monadic
 import           Utils
 
-instance Fail.MonadFail (ZMQ z) where
+instance Fail.MonadFail (Builder z) where
   fail = error
 
 data W a = Bit Bool | Lit Int [Bool] | Wires [Int] | Func a
@@ -30,17 +30,15 @@ data W a = Bit Bool | Lit Int [Bool] | Wires [Int] | Func a
 newtype C z st a = C { circ :: [Int] -> [Int] -> Builder z V }
 
 runWith :: [Int] -> [Int] -> (forall z . C z st a -> Builder z [Int])
-runWith x y c = flip fmap (circ c x y) $ \case
-  (L a  ) -> a
-  (V _ a) -> a
+runWith x y c = fmap flatV (circ c x y)
 
 const2 :: a -> b -> c -> a
 const2 a _ _ = a
 
 instance Core (C z) where
-  word8 n = C $ const2 $ mkConst (BS.pack . bitsToBytes . fromFinite $ n)
-  int n = C $ const2 $ mkConst (BS.pack . bitsToBytes . fromFinite $ n)
-  bool b = C $ const2 $ mkConstBit b >>= \a -> return [a]
+  word8 n = C . const2 $ L <$> mkConst (BS.pack . bitsToBytes . fromFinite $ n)
+  int n = C . const2 $ L <$> mkConst (BS.pack . bitsToBytes . fromFinite $ n)
+  bool b = C . const2 . fmap L $ mkConstBit b >>= \a -> return [a]
   a .+ b = C $ \i0 i1 -> do
     (L a') <- circ a i0 i0
     (L b') <- circ b i1 i1
@@ -79,11 +77,17 @@ instance Core (C z) where
     (L b') <- circ b i1 i1
     e  <- eq a' b'
     fmap L $ notGate e >>= \x -> pure [x]
+  fix _ = undefined
 
 data V = V Int [Int] | L [Int]
   deriving Show
 
-instance List C where
+flatV :: V -> [Int]
+flatV = \case
+  L x     -> x
+  (V _ x) -> x
+
+instance List (C z) where
   arr [] = C $ const2 $ pure (V 0 [])
   arr xs = C $ \a b -> do
     list <- traverse (\x -> circ x a b) xs
@@ -95,15 +99,16 @@ instance List C where
     (V n v) <- circ xs a b
     pure . V (n - 1) $ drop (length v `div` n) v
 
-instance Scan C where
+instance Scan (C z) where
   scan f x xs = C $ \a b -> do
     vec@(V n v) <- circ xs a b
     case n of
       0 -> pure vec
       _ -> do
         let list = chunksOf (length v `div` n) v
+            (C g) = f
         (V _ acc) <- circ x a b
-        undefined
+        V n . concat <$> scanlM (\p q -> flatV <$> g p q) acc list
 
 -- data F st a = Fuck { st :: Maybe st, dy :: Fix B }
 -- data B f = F (Builder [Int] -> f) | B (Builder [Int])
