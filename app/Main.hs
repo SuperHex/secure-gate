@@ -5,6 +5,7 @@
 module Main where
 
 import           Circuit.Class
+import           Circuit.Eval
 import           Circuit.Gates
 import           Circuit.Parser
 import           Circuit.Wire
@@ -49,5 +50,10 @@ main = do
     --         str <- eval x' y' prog
     --         print . fromFiniteBits @Int . toBits . BS.unpack $ str
     _ -> print "Please give two numbers"
-  where prog = parseRun "/home/cirno/Downloads/AES-non-expanded.txt"
+ where
+  prog = do
+    a <- in64 Alice
+    b <- in64 Bob
+    runWith a b
+      $ leven (fmap word8 (BS.unpack "abc")) (fmap word8 (BS.unpack "bde"))
 

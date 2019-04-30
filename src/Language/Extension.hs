@@ -19,15 +19,17 @@ import Circuit.Class
 import Data.Proxy
 import Data.Coerce
 
+minimum_ :: (Core repr, Ord st, Ord b) => [repr st b] -> repr st b
+minimum_ = foldr1 (\a b -> if_ (a .<= b) a b)
 
-minimum_ :: (Fold repr, Ord st, Ord b) => repr st [b] -> repr st b
-minimum_ xs = rFold (lam2 $ \a b -> if_ (a .<= b) a b) (hd xs) (tl xs)
+minimumA :: (Fold repr, Ord st, Ord b) => repr st [b] -> repr st b
+minimumA xs = rFold (lam2 $ \a b -> if_ (a .<= b) a b) (hd xs) (tl xs)
 
-maximum_ :: (Fold repr, Ord st, Ord b) => repr st [b] -> repr st b
-maximum_ xs = rFold (lam2 $ \a b -> if_ (a .<= b) b a) (hd xs) (tl xs)
+maximumA :: (Fold repr, Ord st, Ord b) => repr st [b] -> repr st b
+maximumA xs = rFold (lam2 $ \a b -> if_ (a .<= b) b a) (hd xs) (tl xs)
 
 leven
-  :: (Fold repr, Eq st)
+  :: (Core repr, Eq st)
   => [repr st Word8]
   -> [repr st Word8]
   -> repr Word8 Word8
@@ -37,7 +39,7 @@ leven s1 s2 = last
    -- TODO: share intermidiate value in scanl
   transform ns@(n : ns1) c = scanl calc (n .+ word8 1) $ zip3 s1 ns ns1
    where
-    calc z (c1, x, y) = minimum_ $ arr
+    calc z (c1, x, y) = minimum_
       [y .+ word8 1, z .+ word8 1, x .+ if_ (c1 .!= c) (word8 1) (word8 0)]
 
 scanlM :: (Monad m) => (b -> a -> m b) -> b -> [a] -> m [b]

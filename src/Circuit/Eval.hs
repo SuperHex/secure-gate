@@ -8,6 +8,7 @@
 
 module Circuit.Eval where
 
+import           Circuit.Class
 import           Control.Monad
 import           Control.Monad.Reader
 import qualified Data.ByteString      as BS
@@ -16,8 +17,7 @@ import qualified Data.Map             as M
 import           Data.Maybe           (fromJust)
 import qualified Data.Sequence        as Seq
 import           System.ZMQ4.Monadic
-import Utils
-import Circuit.Class
+import           Utils
 
 
 initCircuit :: Key -> (forall z . ZMQ z (Context z))

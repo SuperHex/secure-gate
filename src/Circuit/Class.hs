@@ -17,6 +17,7 @@ module Circuit.Class
   , freeXORHelper
   , halfANDHelper
   , mkConstBit
+  , clearWires
   ) where
 
 import           Control.Monad
@@ -37,6 +38,7 @@ class (Monad c) => Component (c :: * -> *) a | c -> a where
   high :: c a
   low  :: c a
   mkWire :: c a
+  clearWire :: a -> c ()
   xor :: a -> a -> c a
   and :: a -> a -> c a
 
@@ -44,6 +46,7 @@ instance Component (Builder z) Int where
   high = mkConstBit True
   low = mkConstBit False
   mkWire = mkWire'
+  clearWire = clearWire'
   xor = freeXOR
   and = halfAND
 
@@ -92,6 +95,17 @@ mkWire' = Builder $ do
   mapRef <- asks wireMap
   liftIO $ modifyIORef mapRef (M.insert idx keys)
   return idx
+
+clearWire' :: Int -> Builder z ()
+clearWire' wire = Builder $ do
+  context <- ask
+  wmap    <- liftIO $ readIORef (wireMap context)
+  case M.lookup wire wmap of
+    Nothing  -> return ()
+    (Just _) -> liftIO $ modifyIORef (wireMap context) (M.delete wire)
+
+clearWires :: (Component c a, Functor t, Foldable t) => t a -> c ()
+clearWires = mapM_ clearWire
 
 halfANDHelper :: Int -> Int -> Maybe Int -> Builder z Int
 halfANDHelper a b o = Builder $ do
