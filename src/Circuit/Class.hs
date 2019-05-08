@@ -7,9 +7,16 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Circuit.Class
   (Component (..)
+  , View (..)
+  , (:~>) (..)
   , Gate (..)
   , Builder (..)
   , Context (..)
@@ -25,11 +32,14 @@ import           Control.Monad.Reader
 import           Data.Binary
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Generics        as Data
 import           Data.IORef
 import qualified Data.Map             as M
 import           Data.Maybe           (fromJust)
+import           Data.Proxy
 import qualified Data.Sequence        as Seq
-import           GHC.Generics         hiding (Rep)
+import           Data.Word
+import qualified GHC.Generics
 import           Prelude              hiding (and)
 import           System.ZMQ4.Monadic
 import           Utils
@@ -49,6 +59,23 @@ instance Component (Builder z) Int where
   clearWire = clearWire'
   xor = freeXOR
   and = halfAND
+
+data (:~>) a b
+  = VInt64 [a]
+  | VString Int [a]
+  deriving (Show, Data.Data)
+
+class (Component c a) => View t c a where
+  view :: c [a] -> c (a :~> t)
+  unView :: c (a :~> t) -> c [a]
+
+instance View String (Builder z) Int where
+  view = fmap (\wires -> VString (length wires `div` 8) wires)
+  unView = fmap (\(VString _ ws) -> ws)
+
+instance View Word64 (Builder z) Int where
+  view = fmap VInt64
+  unView = fmap (\(VInt64 ws) -> ws)
 
 newtype Builder z a = Builder { runBuilder :: ReaderT (Context z) (ZMQ z) a}
   deriving (Functor, Applicative, Monad, MonadIO)
@@ -72,7 +99,7 @@ data Gate
           , inputs :: (Int, Int)
           , outs  :: Int
           , table :: (Key, Key, Key, Key) }
-  deriving (Generic)
+  deriving (GHC.Generics.Generic)
 
 type Circuit = Seq.Seq Gate
 

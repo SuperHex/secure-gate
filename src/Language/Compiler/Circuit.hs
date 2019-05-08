@@ -2,6 +2,9 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Language.Compiler.Circuit where
 
@@ -9,6 +12,7 @@ import           Circuit.Class
 import           Circuit.Gates
 import           Control.Monad        (liftM2)
 import qualified Control.Monad.Fail   as Fail
+import           Control.Monad.RWS
 import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Data.ByteString      as BS
@@ -17,6 +21,7 @@ import qualified Data.Map             as M
 import           Data.Word
 import           Language.Core
 import           Language.Extension
+import           Language.QuasiQuote
 import           Prelude              hiding (pred)
 import           System.ZMQ4.Monadic
 import           Utils
@@ -79,6 +84,15 @@ instance Core (C z) where
     fmap L $ notGate e >>= \x -> pure [x]
   fix _ = undefined
 
+
+-- sc :: (Monad m) => (b -> a -> m b) -> m b -> [m a] -> m [m b]
+-- sc _ _   []       = pure []
+-- sc f acc (x : xs) = do
+--   acc' <- acc
+--   x'   <- x
+--   f'   <- f acc' x'
+--   (pure f' :) <$> sc f (pure f') xs
+
 data V = V Int [Int] | L [Int]
   deriving Show
 
@@ -125,3 +139,24 @@ instance Scan (C z) where
 -- instance Functor B where
 --   fmap f (B b) = B b
 --   fmap f (F ff) = F $ \x -> f (ff x)
+
+
+data CompileState = CS
+
+type Compiler z a = RWST Int CompileState Int (Builder z) a
+
+secureRun = unView . compile
+
+compile :: Expr -> Builder z (Int :~> String)
+compile (Int64 n ) = view $ mkConst (BS.pack . bitsToBytes . fromFinite $ n)
+compile (Input i ) = pure i
+compile (e1 :+ e2) = do
+  a1 <- compile e1
+  a2 <- compile e2
+  case (a1, a2) of
+    (VInt64 n1   , VInt64 n2   ) -> view (adder n1 n2)
+    (VString _ s1, VString _ s2) -> view (adder s1 s2)
+compile (e1 :- e2) = do
+  a1 <- unView $ compile e1
+  a2 <- unView $ compile e2
+  view $ subtractor a1 a2

@@ -1,6 +1,9 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module Main where
 
@@ -18,6 +21,7 @@ import           Data.Word                  (Word8)
 import           Language.Compiler.Circuit
 import           Language.Core
 import           Language.Extension
+import           Language.QuasiQuote
 import           Network.Pair
 import           System.Environment         (getArgs)
 import           System.ZMQ4.Monadic
@@ -35,7 +39,7 @@ main = do
               (y : []) -> BSC.pack y
         in  runZMQ $ do
               sock <- initServer "tcp://127.0.0.1:1145"
-              runServer y' prog sock
+              runServer y' prog1 sock
       "client" ->
         let y' = case xs of
               (_ : y : []) ->
@@ -51,9 +55,13 @@ main = do
     --         print . fromFiniteBits @Int . toBits . BS.unpack $ str
     _ -> print "Please give two numbers"
  where
-  prog = do
+  prog2 = do
     a <- in64 Alice
     b <- in64 Bob
     runWith a b
-      $ leven (fmap word8 (BS.unpack "abc")) (fmap word8 (BS.unpack "bde"))
+      $ leven (fmap word8 (BS.unpack "abc")) (fmap word8 (BS.unpack "abc"))
 
+  prog1 = do
+    alice <- view @String $ in64 Alice
+    bob   <- view @String $ in64 Bob
+    secureRun [prog| $in:alice + $in:bob |]
