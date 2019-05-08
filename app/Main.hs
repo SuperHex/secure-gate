@@ -64,4 +64,5 @@ main = do
   prog1 = do
     alice <- view @String $ in64 Alice
     bob   <- view @String $ in64 Bob
-    secureRun [prog| $in:alice + $in:bob |]
+    let three = 3 :: Int
+    secureRun [prog| $in:alice - $in:bob + (3 - $int:three) |]

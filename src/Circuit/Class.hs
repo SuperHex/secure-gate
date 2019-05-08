@@ -236,16 +236,16 @@ mkConstBit b = Builder $ do
   wmap <- liftIO $ readIORef (wireMap context)
   gate <- case M.lookup (if b then -1 else -2) wmap of
     Nothing -> do
-      offset  <- asks freeOffset
-      (lo, _) <- liftIO $ genAESKeyPair128With offset
-      liftIO $ modifyIORef (wireMap context)
-                           (M.insert (if b then -1 else -2) (lo, lo))
-      return $ Const (if b then -1 else -2) lo
-    (Just (lo, _)) -> return $ Const (if b then -1 else -2) lo
+      offset     <- asks freeOffset
+      w@(lo, hi) <- liftIO $ genAESKeyPair128With offset
+      liftIO $ modifyIORef (wireMap context) (M.insert (if b then -1 else -2) w)
+      return $ Const (if b then -1 else -2) (if b then hi else lo)
+    (Just (lo, hi)) ->
+      return $ Const (if b then -1 else -2) (if b then hi else lo)
   unless (isRemote context) $ liftIO $ modifyIORef (circuit context)
                                                    (Seq.|> gate)
   runBuilder $ sendGate gate
-  return 0
+  return (if b then -1 else -2)
 
 sendGate :: Gate -> (forall z . Builder z ())
 sendGate gate = Builder $ do
