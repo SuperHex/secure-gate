@@ -1,9 +1,9 @@
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE TypeApplications  #-}
+{-# LANGUAGE TypeOperators     #-}
 
 module Main where
 
@@ -19,8 +19,8 @@ import qualified Data.ByteString.Lazy.Char8 as LBSC
 import           Data.List.Split            (chunksOf)
 import           Data.Word                  (Word8)
 import           Language.Compiler.Circuit
-import           Language.Core
-import           Language.Extension
+import qualified Language.Core              as Core
+import qualified Language.Extension         as Ext
 import           Language.QuasiQuote
 import           Network.Pair
 import           System.Environment         (getArgs)
@@ -39,7 +39,7 @@ main = do
               (y : []) -> BSC.pack y
         in  runZMQ $ do
               sock <- initServer "tcp://127.0.0.1:1145"
-              runServer y' prog1 sock
+              runServer y' prog3 sock
       "client" ->
         let y' = case xs of
               (_ : y : []) ->
@@ -59,10 +59,20 @@ main = do
     a <- in64 Alice
     b <- in64 Bob
     runWith a b
-      $ leven (fmap word8 (BS.unpack "abc")) (fmap word8 (BS.unpack "abc"))
+      $ Ext.leven (fmap Core.word8 (BS.unpack "abc")) (fmap Core.word8 (BS.unpack "abc"))
 
   prog1 = do
     alice <- view @String $ in64 Alice
     bob   <- view @String $ in64 Bob
     let three = 3 :: Int
     secureRun [prog| $in:alice - $in:bob + (3 - $int:three) |]
+
+  prog3 = do
+    alice <- in64 Alice
+    bob <- in64 Bob
+    let alice' = chunksOf 8 alice
+        bob' = chunksOf 8 bob
+    lev alice' bob'
+
+
+

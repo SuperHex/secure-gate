@@ -1,14 +1,18 @@
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 
 module Circuit.Gates where
 
 import           Circuit.Class
 import           Control.Monad.Reader
-import qualified Data.ByteString      as BS
+import qualified Data.ByteString       as BS
+import qualified Data.ByteString.Char8 as BSC
 import           Data.List.Split
-import           Prelude              hiding (and)
-import           Utils                (bytesToBits)
+import           Data.Word             (Word8)
+import           Numeric               (showHex)
+import           Prelude               hiding (and, minimum)
+import           Utils                 (bytesToBits, foldlM, scanlM)
 
 -- Note: All input bits are ordered as
 --         LSB ------> MSB
@@ -18,6 +22,9 @@ type Index = Int
 mkConst :: (Component c a) => BS.ByteString -> c [a]
 mkConst s =
   traverse (\x -> if x then high else low) (bytesToBits $ BS.unpack s)
+
+int :: (Component c a) => Int -> c [a]
+int = mkConst . BS.pack . fmap (toEnum . subtract 48 . fromEnum) . show
 
 notGate :: (Component c a) => a -> c a
 notGate x = do
@@ -269,6 +276,9 @@ ge a b = do
 eq :: (Component c a) => [a] -> [a] -> c a
 eq = eq4N
 
+neq :: (Component c a) => [a] -> [a] -> c a
+neq a b = eq a b >>= notGate
+
 basicMul :: (Component c a) => [a] -> [a] -> c [a]
 basicMul a b = do
   let partial y x = mapM (x `and`) y
@@ -295,3 +305,35 @@ basicMul a b = do
       clearWires (c : c' : s : ad)
       return (head x : res)
 
+minimum_ :: (Component c a) => [[a]] -> c [a]
+minimum_ [] = return []
+minimum_ (x : xs) = go x xs
+  where go t [] = return t
+        go t (y : ys) = do
+          cond <- t `le` y
+          x' <- ifThenElse cond t y
+          go x' ys
+
+calc :: (Component c a) => [a] -> [a] -> ([a], [a], [a]) -> c [a]
+calc c z (c1, x, y) = do
+  e <- c `neq` c1
+  one <- int 1
+  zero <- int 0
+  y' <- adder y one
+  z' <- adder z one
+  e' <- ifThenElse e one zero
+  x' <- adder x e'
+  minimum_ [y', z', x']
+
+transform :: (Component c a) => [[a]] -> [[a]] -> [a] -> c [[a]]
+transform s ns@(n : ns1) c = do
+  one <- int 1
+  n' <- adder n one
+  r <- scanlM (calc c) n' $ zip3 s ns ns1
+  return r
+
+lev :: (Component c a) => [[a]] -> [[a]] -> c [a]
+lev s1 s2 = do
+  len <- traverse int [0 .. length s1]
+  res <- foldlM (transform s1) len s2
+  return (last res)

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2387a681fe9e4c07e4cf25f07e57e7f40b9a082ec46e905fd9d366cc37d8b4a2
+-- hash: 684054f2b6956b047e9c80d59aa941f51412278dd9924d50c55dce28bfe0cb22
 
 name:           secure-gate
 version:        0.1.0.0
@@ -54,12 +54,11 @@ library
     , cryptonite >=0.25
     , ghc-prim >=0.5.3
     , hashtables >=1.2
-    , haskell-src-exts >=1.20
-    , haskell-src-meta >=0.8
     , megaparsec >=7.0
     , mtl >=2.2
     , parser-combinators >=1.0
     , split >=0.2
+    , syb >=0.7
     , template-haskell >=2.14
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
@@ -80,13 +79,12 @@ executable secure-gate-exe
     , cryptonite >=0.25
     , ghc-prim >=0.5.3
     , hashtables >=1.2
-    , haskell-src-exts >=1.20
-    , haskell-src-meta >=0.8
     , megaparsec >=7.0
     , mtl >=2.2
     , parser-combinators >=1.0
     , secure-gate
     , split >=0.2
+    , syb >=0.7
     , template-haskell >=2.14
     , vector >=0.12
     , zeromq4-haskell >=0.8.0
@@ -108,13 +106,12 @@ test-suite secure-gate-test
     , cryptonite >=0.25
     , ghc-prim >=0.5.3
     , hashtables >=1.2
-    , haskell-src-exts >=1.20
-    , haskell-src-meta >=0.8
     , megaparsec >=7.0
     , mtl >=2.2
     , parser-combinators >=1.0
     , secure-gate
     , split >=0.2
+    , syb >=0.7
     , template-haskell >=2.14
     , vector >=0.12
     , zeromq4-haskell >=0.8.0

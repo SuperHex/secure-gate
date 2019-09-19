@@ -38,16 +38,16 @@ initCircuitRemote k z = do
   ctx <- initCircuit k
   return $ ctx { isRemote = True, zmqSocket = Just z }
 
-getCircuit :: forall a . (forall z . Builder z a) -> IO Int
+getCircuit :: forall a . (forall z . Builder z a) -> IO Circuit
 getCircuit c = runZMQ $ do
   context <- initCircuit ""
   runReaderT (runBuilder c >> go) context
  where
-  go :: ReaderT (Context z) (ZMQ z) Int
+  go :: ReaderT (Context z) (ZMQ z) Circuit
   go = do
     circ <- asks circuit
     cir  <- liftIO (readIORef circ)
-    return $ Seq.length cir
+    return cir
 
 
 evalGate :: BasicHashMap Int Key -> Gate -> IO ()

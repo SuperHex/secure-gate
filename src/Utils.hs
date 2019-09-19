@@ -1,6 +1,7 @@
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ExplicitForAll            #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TypeApplications          #-}
 
 module Utils
   ( module Crypto.Cipher.Types
@@ -30,8 +31,12 @@ module Utils
   -- other
   , genOffset
   , xorKey
+  , foldlM
+  , scanlM
+  , scanl1M
   ) where
 
+import           Control.Monad.State
 import           Crypto.Cipher.AES
 import           Crypto.Cipher.Types
 import           Crypto.Error
@@ -171,3 +176,28 @@ fromFinite b = fmap (testBit b) [0 .. finiteBitSize b - 1]
 toFinite :: (FiniteBits b) => [Bool] -> b
 toFinite = foldr f zeroBits
   where f b x = if b then setBit (x `shiftL` 1) 0 else x `shiftL` 1
+
+-- | similar to foldl, with monadic function
+foldlM :: (Monad m) => (b -> a -> m b) -> b -> [a] -> m b
+foldlM f b [] = return b
+foldlM f b (x : xs) = do
+  res <- f b x
+  foldlM f res xs
+
+-- | similar to scanl, with monadic function
+scanlM :: forall a b m . (Monad m) => (b -> a -> m b) -> b -> [a] -> m [b]
+scanlM _ b [] = return [b]
+scanlM f b t = (b :) <$> evalStateT (go t) b
+  where go :: [a] -> StateT b m [b]
+        go [] = return []
+        go (x : xs) = do
+          s <- get
+          res <- lift (f s x)
+          put res
+          (:) <$> return res <*> go xs
+
+-- | similar to scanl1, with monadic function
+scanl1M :: forall a m . (Monad m) => (a -> a -> m a) -> [a] -> m [a]
+scanl1M _ []       = return []
+scanl1M _ [x]      = return [x]
+scanl1M f (x : xs) = scanlM f x xs
